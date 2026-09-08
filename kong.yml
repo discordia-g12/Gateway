@@ -1,0 +1,171 @@
+_format_version: "3.0"
+
+services:
+  - name: auth-user-service
+    url: http://auth-service:8000
+    connect_timeout: 10000
+    write_timeout: 10000
+    read_timeout: 10000
+    routes:
+      - name: users-profile
+        paths:
+          - "/api/v1/users"
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate(nil, false)'
+
+  - name: chat-engine-service
+    url: http://chat-service:3000
+    connect_timeout: 10000
+    write_timeout: 3600000 # 1 hora para WS
+    read_timeout: 3600000
+    routes:
+      - name: chat-rest
+        paths:
+          - "/api/v1/messages"
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate(nil, false)'
+      - name: chat-ws
+        paths:
+          - "/ws/chat"
+        strip_path: false
+        protocols: ["http", "https"]
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate(nil, true)'
+  - name: voice-signaling-service
+    url: http://voice-service:3001
+    connect_timeout: 10000
+    write_timeout: 3600000
+    read_timeout: 3600000
+    routes:
+      - name: voice-rest
+        paths: ["/api/v1/voice"]
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate(nil, false)'
+      - name: voice-ws
+        paths: ["/ws/voice"]
+        strip_path: false
+        protocols: ["http", "https"]
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate(nil, true)'
+
+  - name: server-core-service
+    url: http://server-core:8001
+    routes:
+      - name: server-core-routes
+        paths:
+          - "/api/v1/servers"
+          - "/api/v1/channels"
+          - "/api/v1/roles"
+          - "/api/v1/moderation"
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate(nil, false)'
+
+  - name: payments-service
+    url: http://payments-service:8002
+    routes:
+      - name: payments-routes
+        paths:
+          - "/api/v1/payments"
+          - "/api/v1/points"
+          - "/api/v1/boosts"
+        strip_path: false
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 20
+              policy: redis
+              redis_host: redis
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate(nil, false)'
+
+  - name: notification-audit-service
+    url: http://notification-service:8003
+    routes:
+      - name: notification-routes
+        paths: ["/api/v1/notifications"]
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate(nil, false)'
+      - name: staff-only-routes
+        paths:
+          - "/api/v1/audit"
+          - "/api/v1/metrics"
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate("staff", false)'
+      - name: platform-status
+        paths:
+          - "/api/v1/status"
+        strip_path: false
+        # Pública: estado agregado de la plataforma.
+
+  - name: api-gateway-self
+    url: http://localhost:65535
+    routes:
+      - name: gateway-livez
+        paths: ["/livez"]
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("gateway_health").livez()'
+      - name: gateway-readyz
+        paths: ["/readyz"]
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("gateway_health").readyz()'
+
+plugins:
+  - name: cors
+    config:
+      origins: ["https://app.discordia.com", "http://localhost:5173"]
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+      headers: ["Authorization", "Content-Type", "X-Correlation-ID"]
+      exposed_headers: ["X-Correlation-ID"]
+  - name: rate-limiting
+    config:
+      minute: 300
+      policy: redis
+      redis_host: redis
+  - name: correlation-id
+    config:
+      header_name: X-Correlation-ID
+      generator: uuid
+      echo_downstream: true
+  - name: request-size-limiting
+    config:
+      allowed_payload_size: 50
