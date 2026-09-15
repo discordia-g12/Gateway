@@ -67,7 +67,7 @@ services:
                 - 'require("auth0_validator").validate(nil, true)'
 
   - name: server-core-service
-    url: http://server-core:8001
+    url: http://server-roles-service:8080
     routes:
       - name: server-core-routes
         paths:
