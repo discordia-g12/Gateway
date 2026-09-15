@@ -1,20 +1,33 @@
 local openidc = require "resty.openidc"
 
--- Verifica los access tokens emitidos por Auth0 (RS256, JWKS con rotación de
--- claves) para las rutas del Gateway.
+-- Verifica los access tokens emitidos por Auth0 para las rutas del Gateway.
 
 local M = {}
 
 local AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN")
 local AUTH0_AUDIENCE = os.getenv("AUTH0_AUDIENCE")
 local AUTH0_ROLE_CLAIM = os.getenv("AUTH0_ROLE_CLAIM") or "https://discordia.app/role"
+local AUTH0_EMAIL_CLAIM = os.getenv("AUTH0_EMAIL_CLAIM") or "https://discordia.app/email"
 
 local ISSUER = AUTH0_DOMAIN and ("https://" .. AUTH0_DOMAIN .. "/") or nil
 local JWKS_URI = AUTH0_DOMAIN and ("https://" .. AUTH0_DOMAIN .. "/.well-known/jwks.json") or nil
 
-local function reject(status, message)
-  kong.log.warn("[auth0_validator] ", message)
-  return kong.response.exit(status, { message = message })
+local function reject(status, detail)
+  kong.log.warn("[auth0_validator] ", detail)
+  local titles = {
+    [400] = "Bad Request",
+    [401] = "Unauthorized",
+    [403] = "Forbidden",
+    [500] = "Internal Server Error",
+  }
+  local problem = {
+    ["type"] = "about:blank",
+    title = titles[status] or "Error",
+    status = status,
+    detail = detail,
+    instance = kong.request.get_path(),
+  }
+  return kong.response.exit(status, problem, {["Content-Type"] = "application/problem+json"})
 end
 
 local function extract_bearer_token(allow_query_arg)
@@ -95,7 +108,20 @@ function M.validate(require_role, allow_query_arg)
     return reject(403, "Forbidden: " .. require_role .. " only")
   end
 
+  -- El access token de una API custom (audience != OIDC estándar) NO trae
+  -- el claim "email" aunque el cliente haya pedido el scope "email": ese
+  -- scope solo afecta al ID token. Por eso primero buscamos el claim
+  -- namespaced que agrega la Auth0 Action del login flow, y sólo si no
+  -- está, caemos al claim estándar "email" (por si algún día cambia el
+  -- flujo de emisión y sí llega directo).
+  local email = claims[AUTH0_EMAIL_CLAIM] or claims.email
+
   kong.service.request.set_header("X-User-Id", tostring(claims.sub))
+  if email then
+    kong.service.request.set_header("X-User-Email", tostring(email))
+  else
+    kong.log.warn("[auth0_validator] token sin claim de email (", AUTH0_EMAIL_CLAIM, "); X-User-Email no se propaga")
+  end
   kong.service.request.set_header("X-User-Role", tostring(role))
 end
 
