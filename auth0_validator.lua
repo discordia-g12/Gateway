@@ -49,6 +49,13 @@ end
 -- require_role: opcional (ej. "staff") para rutas de backoffice/audit.
 -- allow_query_arg: true únicamente en las rutas de WebSocket.
 function M.validate(require_role, allow_query_arg)
+  -- Las peticiones preflight de CORS (OPTIONS) son enviadas por el navegador sin headers
+  -- de autenticación. Deben retornar inmediatamente para que el plugin de CORS de Kong
+  -- las responda con 200/204 y los headers Access-Control-Allow-*.
+  if kong.request.get_method() == "OPTIONS" then
+    return
+  end
+
   if not ISSUER or not JWKS_URI or not AUTH0_AUDIENCE then
     kong.log.err("[auth0_validator] faltan AUTH0_DOMAIN / AUTH0_AUDIENCE")
     return reject(500, "Gateway misconfigured")
