@@ -72,7 +72,7 @@ function M.validate(require_role, allow_query_arg)
   -- silencio, dejando la verificación de firma sin clave (de ahí el
   -- confuso "No trusted certs loaded" que en realidad no tenía nada que
   -- ver con certificados).
-  local claims, err = openidc.bearer_jwt_verify({
+  local claims, err = openidc.jwt_verify(token, {
     discovery = { jwks_uri = JWKS_URI },
     jwk_expires_in = 3600,
   })
