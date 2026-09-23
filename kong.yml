@@ -174,7 +174,7 @@ plugins:
     config:
       origins: ["https://app.discordia.com", "http://localhost:5173"]
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
-      headers: ["Authorization", "Content-Type", "X-Correlation-ID"]
+      headers: ["Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"]
       exposed_headers: ["X-Correlation-ID"]
   - name: rate-limiting
     config:
