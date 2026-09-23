@@ -172,7 +172,7 @@ services:
 plugins:
   - name: cors
     config:
-      origins: ["https://app.discordia.com", "http://localhost:5173"]
+      origins: ["https://app.discordia.com", "http://localhost:5173", "http://ec2-3-239-116-240.compute-1.amazonaws.com:5173"]
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
       headers: ["Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"]
       exposed_headers: ["X-Correlation-ID"]
