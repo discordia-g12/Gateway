@@ -8,9 +8,23 @@ local AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN")
 local AUTH0_AUDIENCE = os.getenv("AUTH0_AUDIENCE")
 local AUTH0_ROLE_CLAIM = os.getenv("AUTH0_ROLE_CLAIM") or "https://discordia.app/role"
 local AUTH0_EMAIL_CLAIM = os.getenv("AUTH0_EMAIL_CLAIM") or "https://discordia.app/email"
+local AUTH0_EMAIL_VERIFIED_CLAIM = os.getenv("AUTH0_EMAIL_VERIFIED_CLAIM") or "https://discordia.app/email_verified"
 
 local ISSUER = AUTH0_DOMAIN and ("https://" .. AUTH0_DOMAIN .. "/") or nil
 local JWKS_URI = AUTH0_DOMAIN and ("https://" .. AUTH0_DOMAIN .. "/.well-known/jwks.json") or nil
+
+local IDENTITY_HEADERS = {
+  "X-User-Id",
+  "X-User-Email",
+  "X-User-Email-Verified",
+  "X-User-Role",
+}
+
+function M.strip_identity_headers()
+  for _, name in ipairs(IDENTITY_HEADERS) do
+    kong.service.request.clear_header(name)
+  end
+end
 
 local function reject(status, detail)
   kong.log.warn("[auth0_validator] ", detail)
@@ -38,7 +52,7 @@ local function extract_bearer_token(allow_query_arg)
       return token
     end
   end
-  -- allow_query_arg solo debe venir en true desde las rutas /ws/*: el
+  -- allow_query_arg solo debe venir en true desde las rutas WebSocket: el
   -- handshake de WebSocket del navegador no puede mandar headers custom.
   if allow_query_arg then
     return kong.request.get_query_arg("token")
@@ -46,9 +60,22 @@ local function extract_bearer_token(allow_query_arg)
   return nil
 end
 
+local function resolve_email_verified(claims)
+  local value = claims[AUTH0_EMAIL_VERIFIED_CLAIM]
+  if value == nil then
+    value = claims.email_verified
+  end
+  if value == true or value == "true" then
+    return "true"
+  end
+  return "false"
+end
+
 -- require_role: opcional (ej. "staff") para rutas de backoffice/audit.
 -- allow_query_arg: true únicamente en las rutas de WebSocket.
 function M.validate(require_role, allow_query_arg)
+  M.strip_identity_headers()
+
   -- Las peticiones preflight de CORS (OPTIONS) son enviadas por el navegador sin headers
   -- de autenticación. Deben retornar inmediatamente para que el plugin de CORS de Kong
   -- las responda con 200/204 y los headers Access-Control-Allow-*.
@@ -129,6 +156,7 @@ function M.validate(require_role, allow_query_arg)
   else
     kong.log.warn("[auth0_validator] token sin claim de email (", AUTH0_EMAIL_CLAIM, "); X-User-Email no se propaga")
   end
+  kong.service.request.set_header("X-User-Email-Verified", resolve_email_verified(claims))
   kong.service.request.set_header("X-User-Role", tostring(role))
 end
 
