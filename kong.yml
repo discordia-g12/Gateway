@@ -147,7 +147,11 @@ services:
         paths:
           - "/api/v1/status"
         strip_path: false
-        # Pública: estado agregado de la plataforma.
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").strip_identity_headers()'
 
   - name: api-gateway-self
     url: http://localhost:65535
