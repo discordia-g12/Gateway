@@ -32,4 +32,9 @@ exports.onExecutePostLogin = async (event, api) => {
 
   const role = (event.user.app_metadata && event.user.app_metadata.role) || "user";
   api.accessToken.setCustomClaim(`${NAMESPACE}/role`, role);
+  
+  const username = event.user.user_metadata && event.user.user_metadata.username;
+  if (typeof username === "string" && username.length > 0) {
+    api.idToken.setCustomClaim(`${NAMESPACE}/username`, username);
+  }
 };
