@@ -95,6 +95,7 @@ services:
           - "/api/v1/channels"
           - "/api/v1/roles"
           - "/api/v1/moderation"
+          - "/api/v1/invites"
         strip_path: false
         plugins:
           - name: pre-function
