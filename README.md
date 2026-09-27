@@ -54,6 +54,8 @@ Los nombres de los claims tienen que coincidir con los que setea la Action de Au
 | `auth0_validator.lua` | Verificación del JWT, mapeo de claims a headers y autorización por rol |
 | `gateway_health.lua` | `/livez` y `/readyz` propios del Gateway |
 | `auth0/post-login-action.js` | Action del Login flow de Auth0. Se despliega en el dashboard de Auth0, no en Kong |
+| `auth0/password-reset.md` | Runbook: configuración manual del tenant de Auth0 para el recupero de contraseña |
+| `auth0/change-password-email.html` | Plantilla del email de recupero (se pega en Auth0 → Email Templates → Change Password) |
 | `nginx/main-env.conf` | Directivas `env` para que las variables sean visibles desde Lua |
 | `nginx/shared-dicts.conf` | Zonas de memoria compartida (`discovery`, `jwks`) usadas por `lua-resty-openidc` para cachear la JWKS |
 | `Dockerfile` | `kong:3.4` + `lua-resty-openidc` 1.7.6-3 (instala `lua-resty-session` como dependencia) y certificados CA |
@@ -86,8 +88,10 @@ Los nombres de los claims tienen que coincidir con los que setea la Action de Au
 - Las rutas WebSocket aceptan el token también por query string (`?token=`), porque el handshake del navegador no permite headers custom. Las rutas REST lo aceptan solo por header.
 - Los errores (`401`, `403`, `500`) se devuelven en RFC 7807 (`application/problem+json`).
 
-Login, registro, recuperación de contraseña, verificación de email y MFA no pasan por el Gateway:
-son de Auth0.
+Login, registro, verificación de email y MFA no pasan por el Gateway: son de Auth0. El recupero de
+contraseña se **dispara** por el Gateway (`POST /api/v1/auth/password-reset`, pública y con límite por
+IP) para aplicar límites propios, pero el email y la página donde se elige la nueva contraseña son de
+Auth0 (ver `auth0/password-reset.md`).
 
 ## Referencia de rutas
 
@@ -96,6 +100,7 @@ Todas se acceden vía `http://localhost:8000`. Upstreams según `kong.yml`.
 | Path | Upstream | `strip_path` | Auth |
 |------|----------|--------------|------|
 | `/api/v1/users` (hoy: `GET` y `POST` `/api/v1/users/me`) | `auth-service:8000` | no | JWT |
+| `/api/v1/auth/password-reset` (`POST`) | `auth-service:8000` | no | **Pública** (strip de `X-User-*`) + rate limit propio: 5/min y 30/h por IP |
 | `/api/v1/chat` (REST) | `chat-engine-service:3000` | **sí** | JWT |
 | `/api/v1/chat` con `Upgrade: websocket` | `chat-engine-service:3000` | **sí** | JWT (header o `?token=`) |
 | `/api/v1/voice` | `voice-service:3001` | no | JWT |
@@ -114,8 +119,8 @@ todavía no verifica Redis.
 
 | Plugin | Configuración |
 |--------|---------------|
-| `cors` | Orígenes `https://app.discordia.com`, `http://localhost:5173` y el host EC2 de desarrollo; expone `X-Correlation-ID` |
-| `rate-limiting` | 300 requests/min por IP, contador en Redis |
+| `cors` | Orígenes `https://app.discordia.com`, `http://localhost:5173` y el host EC2 de desarrollo; expone `X-Correlation-ID` y `Retry-After` |
+| `rate-limiting` | 300 requests/min por IP, contador en Redis. Las rutas con su propio `rate-limiting` (pagos, recupero de contraseña) usan el suyo en lugar de este |
 | `correlation-id` | `X-Correlation-ID` (UUID), devuelto también al cliente |
 | `request-size-limiting` | 50 MB |
 
