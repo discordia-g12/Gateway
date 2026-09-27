@@ -16,6 +16,23 @@ services:
             config:
               access:
                 - 'require("auth0_validator").validate(nil, false)'
+      - name: password-reset
+        paths:
+          - "/api/v1/auth/password-reset"
+        methods: ["POST", "OPTIONS"]
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").strip_identity_headers()'
+          - name: rate-limiting
+            config:
+              minute: 5
+              hour: 30
+              limit_by: ip
+              policy: redis
+              redis_host: redis
 
   - name: chat-engine-rest
     url: http://chat-engine-service:3000
@@ -180,7 +197,7 @@ plugins:
       origins: ["https://app.discordia.com", "http://localhost:5173", "http://ec2-3-239-116-240.compute-1.amazonaws.com:5173"]
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
       headers: ["Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"]
-      exposed_headers: ["X-Correlation-ID"]
+      exposed_headers: ["X-Correlation-ID", "Retry-After"]
   - name: rate-limiting
     config:
       minute: 300
