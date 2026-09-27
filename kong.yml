@@ -10,6 +10,7 @@ services:
       - name: users-profile
         paths:
           - "/api/v1/users"
+          - "/api/v1/profile"
         strip_path: false
         plugins:
           - name: pre-function
