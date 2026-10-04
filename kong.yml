@@ -73,7 +73,7 @@ services:
                 - 'require("auth0_validator").validate(nil, true)'
 
   - name: voice-signaling-rest
-    url: http://voice-service:3001
+    url: http://voice-signaling-service:8080
     connect_timeout: 10000
     write_timeout: 10000
     read_timeout: 10000
@@ -89,7 +89,7 @@ services:
                 - 'require("auth0_validator").validate(nil, false)'
 
   - name: voice-signaling-ws
-    url: http://voice-service:3001
+    url: http://voice-signaling-service:8080
     connect_timeout: 10000
     write_timeout: 3600000
     read_timeout: 3600000
