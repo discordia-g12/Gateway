@@ -122,7 +122,7 @@ services:
                 - 'require("auth0_validator").validate(nil, false)'
 
   - name: payments-service
-    url: http://payments-service:8002
+    url: http://payments-service:8000
     routes:
       - name: payments-routes
         paths:
@@ -142,7 +142,7 @@ services:
                 - 'require("auth0_validator").validate(nil, false)'
 
   - name: notification-audit-service
-    url: http://notification-service:8003
+    url: http://notification-service:3000
     routes:
       - name: notification-routes
         paths: ["/api/v1/notifications"]
