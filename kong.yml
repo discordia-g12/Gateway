@@ -1,8 +1,11 @@
+# Plantilla: los destinos ${...} los completa render-config.sh al arrancar el contenedor, con los
+# valores de las variables de entorno (por defecto, los nombres de Docker del compose local; en
+# producción, las IPs privadas de cada nodo). Ver render-config.sh.
 _format_version: "3.0"
 
 services:
   - name: auth-user-service
-    url: http://auth-service:8000
+    url: ${AUTH_SERVICE_URL}
     connect_timeout: 10000
     write_timeout: 10000
     read_timeout: 10000
@@ -36,7 +39,7 @@ services:
               redis_host: redis
 
   - name: chat-engine-rest
-    url: http://chat-engine-service:3000
+    url: ${CHAT_ENGINE_URL}
     connect_timeout: 10000
     write_timeout: 10000
     read_timeout: 10000
@@ -53,7 +56,7 @@ services:
                 - 'require("auth0_validator").validate(nil, false)'
 
   - name: chat-engine-ws
-    url: http://chat-engine-service:3000
+    url: ${CHAT_ENGINE_URL}
     connect_timeout: 10000
     write_timeout: 3600000 # 1 hora para WS
     read_timeout: 3600000
@@ -73,7 +76,7 @@ services:
                 - 'require("auth0_validator").validate(nil, true)'
 
   - name: voice-signaling-rest
-    url: http://voice-signaling-service:8080
+    url: ${VOICE_SIGNALING_URL}
     connect_timeout: 10000
     write_timeout: 10000
     read_timeout: 10000
@@ -89,7 +92,7 @@ services:
                 - 'require("auth0_validator").validate(nil, false)'
 
   - name: voice-signaling-ws
-    url: http://voice-signaling-service:8080
+    url: ${VOICE_SIGNALING_URL}
     connect_timeout: 10000
     write_timeout: 3600000
     read_timeout: 3600000
@@ -105,7 +108,7 @@ services:
                 - 'require("auth0_validator").validate(nil, true)'
 
   - name: server-core-service
-    url: http://server-roles-service:8080
+    url: ${SERVER_ROLES_URL}
     routes:
       - name: server-core-routes
         paths:
@@ -122,7 +125,7 @@ services:
                 - 'require("auth0_validator").validate(nil, false)'
 
   - name: payments-service
-    url: http://payments-service:8000
+    url: ${PAYMENTS_URL}
     routes:
       - name: payments-routes
         paths:
@@ -142,7 +145,7 @@ services:
                 - 'require("auth0_validator").validate(nil, false)'
 
   - name: notification-audit-service
-    url: http://notification-service:3000
+    url: ${NOTIFICATION_URL}
     routes:
       - name: notification-routes
         paths: ["/api/v1/notifications"]
@@ -171,6 +174,20 @@ services:
             config:
               access:
                 - 'require("auth0_validator").strip_identity_headers()'
+
+  # Señalización de voz: el cliente abre wss://api.discordia.lol/livekit/rtc y Kong lo pasa a LiveKit
+  # sin /livekit. Sin auth0_validator: LiveKit valida su propio token (lo firma voice-signaling).
+  # El audio NO pasa por acá: va directo a LiveKit por UDP 7882 (o TCP 7881).
+  - name: livekit-signaling
+    url: ${LIVEKIT_SIGNALING_URL}
+    connect_timeout: 10000
+    write_timeout: 3600000 # 1 hora para WS
+    read_timeout: 3600000
+    routes:
+      - name: livekit
+        paths: ["/livekit"]
+        strip_path: true
+        protocols: ["http", "https"]
 
   - name: api-gateway-self
     url: http://localhost:65535

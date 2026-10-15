@@ -11,8 +11,13 @@ Ver [`docs/ADR-001-API-Gateway.md`](docs/ADR-001-API-Gateway.md) para las decisi
 
 Este repo **no tiene `docker-compose.yml` propio**: el Gateway corre desde `discordia-orchestrator`
 como servicio `gateway` (contenedor `discordia-gateway`), junto a su Redis (`gateway-redis`, con el
-alias de red `redis`) en la red `discordia-net`. El orquestador monta como volúmenes `kong.yml`, los
-módulos `.lua` y los archivos de `nginx/`, y carga `Gateway/.env`.
+alias de red `redis`) en la red `discordia-net`. La imagen ya trae `kong.yml`, los módulos `.lua` y los
+archivos de `nginx/`; en local el orquestador además los monta como volúmenes para editarlos sin
+reconstruir, y carga `Gateway/.env`.
+
+`kong.yml` es una **plantilla**: los destinos de los servicios (`url: ${CHAT_ENGINE_URL}`, etc.) los
+completa `render-config.sh` al arrancar el contenedor. Sin variables usa los nombres del compose
+local; en producción, cada nodo pasa las IPs privadas de los otros (ver *Variables de entorno*).
 
 ```bash
 # Desde discordia-orchestrator
@@ -38,6 +43,13 @@ Se definen en `.env` (copiado de `.env.example`).
 | `AUTH0_EMAIL_CLAIM` | `https://discordia.app/email` | Claim namespaced con el email. Si no viene, se usa `email` como fallback. |
 | `AUTH0_EMAIL_VERIFIED_CLAIM` | `https://discordia.app/email_verified` | Claim namespaced de verificación. Si no viene, se usa `email_verified` como fallback. |
 | `REDIS_HOST` / `REDIS_PORT` | `redis` / `6379` | **Kong no las lee:** los plugins de `rate-limiting` tienen `redis_host: redis` fijo en `kong.yml`. |
+| `AUTH_SERVICE_URL` | `http://auth-service:8000` | Destino de Auth-User-Service (lo usa `render-config.sh`). |
+| `SERVER_ROLES_URL` | `http://server-roles-service:8080` | Destino de Server-Roles-Core-Service. |
+| `PAYMENTS_URL` | `http://payments-service:8000` | Destino de Payments. En producción, `http://10.30.1.10:8003` (nodo infra). |
+| `CHAT_ENGINE_URL` | `http://chat-engine-service:3000` | Destino de Chat-Engine. En producción, `http://10.20.1.10:3000` (nodo realtime). |
+| `VOICE_SIGNALING_URL` | `http://voice-signaling-service:8080` | Destino de Voice-Signaling. En producción, `http://10.20.1.10:8082`. |
+| `NOTIFICATION_URL` | `http://notification-service:3000` | Destino de Notification. En producción, `http://10.20.1.10:3001`. |
+| `LIVEKIT_SIGNALING_URL` | `http://livekit:7880` | Señalización de LiveKit (ruta `/livekit`). En producción, `http://10.20.1.10:7880`. |
 
 Los nombres de los claims tienen que coincidir con los que setea la Action de Auth0
 (`auth0/post-login-action.js`).
@@ -50,7 +62,8 @@ Los nombres de los claims tienen que coincidir con los que setea la Action de Au
 
 | Archivo | Propósito |
 |---------|-----------|
-| `kong.yml` | Servicios, rutas y plugins (declarativo) |
+| `kong.yml` | Servicios, rutas y plugins (declarativo). Plantilla: los destinos son variables |
+| `render-config.sh` | Entrypoint de la imagen: completa los destinos de `kong.yml` y arranca Kong |
 | `auth0_validator.lua` | Verificación del JWT, mapeo de claims a headers y autorización por rol |
 | `gateway_health.lua` | `/livez` y `/readyz` propios del Gateway |
 | `auth0/post-login-action.js` | Action del Login flow de Auth0. Se despliega en el dashboard de Auth0, no en Kong |
@@ -67,7 +80,8 @@ Los nombres de los claims tienen que coincidir con los que setea la Action de Au
 | Puerto | Descripción |
 |--------|-------------|
 | `8000` | Proxy: todo el tráfico de clientes entra por acá |
-| `8001` | Admin API de Kong. Solo para desarrollo local; no exponer en producción |
+| `8001` | Admin API de Kong. Solo para desarrollo local; en producción queda en `127.0.0.1` del contenedor |
+| `8443` | Proxy con TLS (Cloudflare Origin Certificate). Solo en producción, publicado como `443` |
 
 ## Autenticación e identidad
 
