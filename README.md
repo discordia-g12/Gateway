@@ -1,198 +1,202 @@
 # Discordia — API Gateway
 
-Kong 3.4 en modo DB-less (configuración declarativa): punto de entrada único para el tráfico de
-clientes. Valida los access tokens de Auth0 (RS256 contra la JWKS, con cache y rotación de claves),
-inyecta la identidad verificada en headers `X-User-*`, aplica autorización por rol en el perímetro y
-hace proxy a los microservicios.
+Kong 3.4 en modo DB-less (configuración declarativa): punto de entrada único para el tráfico de los
+clientes. Valida los access tokens de Auth0 (RS256 contra la JWKS, con caché y rotación de claves),
+inyecta la identidad verificada en headers `X-User-*`, aplica autorización por rol, rate limiting y CORS,
+y hace proxy a los microservicios.
 
-Ver [`docs/ADR-001-API-Gateway.md`](docs/ADR-001-API-Gateway.md) para las decisiones de diseño.
+Decisiones de diseño: [`docs/ADR-001-API-Gateway.md`](docs/ADR-001-API-Gateway.md) y
+[`docs/ADR-002-Rol-Staff-Backoffice.md`](docs/ADR-002-Rol-Staff-Backoffice.md).
 
-## Cómo se ejecuta
+## Requisitos
 
-Este repo **no tiene `docker-compose.yml` propio**: el Gateway corre desde `discordia-orchestrator`
-como servicio `gateway` (contenedor `discordia-gateway`), junto a su Redis (`gateway-redis`, con el
-alias de red `redis`) en la red `discordia-net`. La imagen ya trae `kong.yml`, los módulos `.lua` y los
-archivos de `nginx/`; en local el orquestador además los monta como volúmenes para editarlos sin
-reconstruir, y carga `Gateway/.env`.
+- Docker.
+- Python 3.12 o superior, solo para los tests.
+- Un tenant de Auth0 con una API registrada. Los valores del tenant de desarrollo ya están en `.env.example`.
 
-`kong.yml` es una **plantilla**: los destinos de los servicios (`url: ${CHAT_ENGINE_URL}`, etc.) los
-completa `render-config.sh` al arrancar el contenedor. Sin variables usa los nombres del compose
-local; en producción, cada nodo pasa las IPs privadas de los otros (ver *Variables de entorno*).
+## Levantarlo en local
+
+El Gateway no tiene base de datos: necesita solo su Redis (contadores de rate limiting). Kong busca a Redis
+con el nombre `redis` (fijo en `kong.yml`), así que los dos van en una misma red de Docker y Redis lleva
+ese alias.
 
 ```bash
-# Desde discordia-orchestrator
-cp Gateway/.env.example Gateway/.env
-docker compose up -d gateway          # levanta también gateway-redis
+cp .env.example .env
+docker build -t discordia-gateway .
 
-docker compose logs -f gateway        # logs
-docker compose restart gateway        # tras cambiar kong.yml, un .lua o .env
-docker compose down
+docker network create discordia-gateway
+docker run -d --name gateway-redis --network discordia-gateway --network-alias redis redis:7-alpine
+docker run -d --name gateway --network discordia-gateway --env-file .env \
+  -e KONG_PROXY_LISTEN=0.0.0.0:8000 -e KONG_ADMIN_LISTEN=0.0.0.0:8001 \
+  -p 8000:8000 -p 127.0.0.1:8001:8001 discordia-gateway
 ```
 
-Kong corre en modo DB-less: todo cambio en `kong.yml` o en los módulos `.lua` requiere reiniciar.
+Probarlo:
+
+```bash
+curl -i localhost:8000/livez                  # 200 {"status":"OK","service":"API Gateway"}
+curl -i localhost:8000/api/v1/users/me        # 401 Missing token
+curl -s localhost:8001/routes | head -c 300   # Admin API: rutas cargadas
+```
+
+Sin los servicios corriendo, una ruta con token válido responde `503`: Kong no encuentra el destino. Para
+apuntar a un servicio que corre en el host, pasar su URL al arrancar (ver la tabla de variables), por
+ejemplo `-e CHAT_ENGINE_URL=http://host.docker.internal:3000`.
+
+Kong carga la configuración al arrancar: después de cambiar `kong.yml`, un `.lua` o `nginx/`, reconstruir
+la imagen y recrear el contenedor:
+
+```bash
+docker rm -f gateway && docker build -t discordia-gateway . && docker run ...   # el mismo run de arriba
+```
+
+Bajar todo: `docker rm -f gateway gateway-redis && docker network rm discordia-gateway`.
+
+### Con el resto del sistema
+
+Para levantar el Gateway junto con todos los servicios, usar el compose del orquestador
+(`discordia-orchestrator/deploy/docker-compose.yml`, profile `local`). Ahí el Gateway escucha en
+`localhost:8000` (HTTP) y `localhost:8443` (TLS autofirmado), y le llega a cada servicio por su nombre o
+por la IP del host.
+
+## Cómo arranca
+
+`kong.yml` es una **plantilla**: los destinos de los servicios (`url: ${CHAT_ENGINE_URL}`, etc.) los completa
+`render-config.sh`, que es el entrypoint de la imagen. Si queda alguna variable sin completar, el contenedor
+no arranca. La imagen trae `kong.yml`, los módulos `.lua` y `nginx/`: cada nodo corre exactamente lo que se
+probó.
 
 ## Variables de entorno
 
-Se definen en `.env` (copiado de `.env.example`).
-
 | Variable | Default | Descripción |
 |----------|---------|-------------|
-| `AUTH0_DOMAIN` | — (requerida) | Dominio del tenant, hoy `dev-dppme5iaqg60gkmo.us.auth0.com`. De él se derivan el issuer (`https://<dominio>/`) y la JWKS (`/.well-known/jwks.json`). |
-| `AUTH0_AUDIENCE` | — (requerida) | Identifier de la API en Auth0 (`https://api.discordia.com`). Tiene que coincidir con el `audience` que piden web y mobile. Si falta alguna de las dos variables requeridas, las rutas protegidas responden `500 Gateway misconfigured`. |
-| `AUTH0_ROLE_CLAIM` | `https://discordia.app/role` | Claim namespaced con el rol (`user` / `staff`). |
-| `AUTH0_EMAIL_CLAIM` | `https://discordia.app/email` | Claim namespaced con el email. Si no viene, se usa `email` como fallback. |
-| `AUTH0_EMAIL_VERIFIED_CLAIM` | `https://discordia.app/email_verified` | Claim namespaced de verificación. Si no viene, se usa `email_verified` como fallback. |
-| `REDIS_HOST` / `REDIS_PORT` | `redis` / `6379` | **Kong no las lee:** los plugins de `rate-limiting` tienen `redis_host: redis` fijo en `kong.yml`. |
-| `AUTH_SERVICE_URL` | `http://auth-service:8000` | Destino de Auth-User-Service (lo usa `render-config.sh`). |
-| `SERVER_ROLES_URL` | `http://server-roles-service:8080` | Destino de Server-Roles-Core-Service. |
-| `PAYMENTS_URL` | `http://payments-service:8000` | Destino de Payments. En producción, `http://10.30.1.10:8003` (nodo infra). |
-| `CHAT_ENGINE_URL` | `http://chat-engine-service:3000` | Destino de Chat-Engine. En producción, `http://10.20.1.10:3000` (nodo realtime). |
-| `VOICE_SIGNALING_URL` | `http://voice-signaling-service:8080` | Destino de Voice-Signaling. En producción, `http://10.20.1.10:8082`. |
-| `NOTIFICATION_URL` | `http://notification-service:3000` | Destino de Notification. En producción, `http://10.20.1.10:3001`. |
-| `LIVEKIT_SIGNALING_URL` | `http://livekit:7880` | Señalización de LiveKit (ruta `/livekit`). En producción, `http://10.20.1.10:7880`. |
+| `AUTH0_DOMAIN` | — (requerida) | Dominio del tenant (`dev-dppme5iaqg60gkmo.us.auth0.com`). De él salen el issuer (`https://<dominio>/`) y la JWKS (`/.well-known/jwks.json`) |
+| `AUTH0_AUDIENCE` | — (requerida) | Identifier de la API en Auth0 (`https://api.discordia.com`). Tiene que coincidir con el `audience` que piden web y mobile. Si falta alguna de las dos, las rutas protegidas responden `500 Gateway misconfigured` |
+| `AUTH0_ROLE_CLAIM` | `https://discordia.app/role` | Claim con el rol (`user` o `staff`) |
+| `AUTH0_EMAIL_CLAIM` | `https://discordia.app/email` | Claim con el email. Si no viene, se usa `email` |
+| `AUTH0_EMAIL_VERIFIED_CLAIM` | `https://discordia.app/email_verified` | Claim de verificación. Si no viene, se usa `email_verified` |
+| `AUTH_SERVICE_URL` | `http://auth-service:8000` | Destino de Auth-User-Service |
+| `SERVER_ROLES_URL` | `http://server-roles-service:8080` | Destino de Server-Roles-Core-Service |
+| `CHAT_ENGINE_URL` | `http://chat-engine-service:3000` | Destino de Chat-Engine-Service |
+| `VOICE_SIGNALING_URL` | `http://voice-signaling-service:8080` | Destino de Voice-Signaling-Session-Service |
+| `NOTIFICATION_URL` | `http://notification-service:3000` | Destino de Notification-Audit-Metrics-Service |
+| `PAYMENTS_URL` | `http://payments-service:8000` | Destino de Payments-Monetization-Service |
+| `LIVEKIT_SIGNALING_URL` | `http://livekit:7880` | Señalización de LiveKit (ruta `/livekit`) |
 
-Los nombres de los claims tienen que coincidir con los que setea la Action de Auth0
-(`auth0/post-login-action.js`).
+Variables propias de Kong que conviene conocer:
 
-> Cada variable que un módulo Lua lea con `os.getenv()` debe declararse en `nginx/main-env.conf`
-> (una directiva `env` por variable, cargada con `KONG_NGINX_MAIN_INCLUDE`). Si no está declarada,
-> `os.getenv()` devuelve `nil` aunque la variable exista en el contenedor.
+| Variable | Default de la imagen | Para qué |
+|---|---|---|
+| `KONG_PROXY_LISTEN` | `0.0.0.0:8000, 0.0.0.0:8443 ssl` | Puertos del proxy. Sin certificado propio, Kong genera uno autofirmado para el 8443 |
+| `KONG_ADMIN_LISTEN` | `127.0.0.1:8001` | Admin API. En producción no sale del contenedor |
+| `KONG_SSL_CERT` / `KONG_SSL_CERT_KEY` | — | Solo producción: Origin Certificate de Cloudflare |
+| `KONG_TRUSTED_IPS` / `KONG_REAL_IP_HEADER` | — | Solo producción: los rangos de Cloudflare y `CF-Connecting-IP`, para que el rate limiting vea la IP real del usuario |
 
-## Archivos
+`REDIS_HOST` y `REDIS_PORT` (en `.env.example`) **no se usan**: los plugins de rate limiting tienen
+`redis_host: redis` fijo en `kong.yml`.
 
-| Archivo | Propósito |
-|---------|-----------|
-| `kong.yml` | Servicios, rutas y plugins (declarativo). Plantilla: los destinos son variables |
-| `render-config.sh` | Entrypoint de la imagen: completa los destinos de `kong.yml` y arranca Kong |
-| `auth0_validator.lua` | Verificación del JWT, mapeo de claims a headers y autorización por rol |
-| `gateway_health.lua` | `/livez` y `/readyz` propios del Gateway |
-| `auth0/post-login-action.js` | Action del Login flow de Auth0. Se despliega en el dashboard de Auth0, no en Kong |
-| `auth0/password-reset.md` | Runbook: configuración manual del tenant de Auth0 para el recupero de contraseña |
-| `auth0/change-password-email.html` | Plantilla del email de recupero (se pega en Auth0 → Email Templates → Change Password) |
-| `nginx/main-env.conf` | Directivas `env` para que las variables sean visibles desde Lua |
-| `nginx/shared-dicts.conf` | Zonas de memoria compartida (`discovery`, `jwks`) usadas por `lua-resty-openidc` para cachear la JWKS |
-| `Dockerfile` | `kong:3.4` + `lua-resty-openidc` 1.7.6-3 (instala `lua-resty-session` como dependencia) y certificados CA |
-| `scripts/test-auth-token.sh` | Pide un token real a Auth0 y lo prueba contra una ruta del Gateway |
-| `tests/test_auth0_validator.py` | Tests unitarios del validador |
-
-## Puertos
-
-| Puerto | Descripción |
-|--------|-------------|
-| `8000` | Proxy: todo el tráfico de clientes entra por acá |
-| `8001` | Admin API de Kong. Solo para desarrollo local; en producción queda en `127.0.0.1` del contenedor |
-| `8443` | Proxy con TLS (Cloudflare Origin Certificate). Solo en producción, publicado como `443` |
+Los nombres de los claims tienen que coincidir con los que agrega la Action de Auth0
+(`auth0/post-login-action.js`). Cada variable que un módulo Lua lee con `os.getenv()` tiene que estar
+declarada en `nginx/main-env.conf`: si no, `os.getenv()` devuelve `nil` aunque la variable exista en el
+contenedor.
 
 ## Autenticación e identidad
 
 - Las rutas protegidas exigen `Authorization: Bearer <access_token>`, emitido por Auth0 para `AUTH0_AUDIENCE`.
-- El validador comprueba la firma RS256 contra la JWKS (cacheada 3600 s), además de `exp`, `iss` y `aud` y la presencia de `sub`.
-- **Antes de validar**, Kong elimina los headers `X-User-*` que mande el cliente. Lo hace en todas las rutas, incluidas `/api/v1/status` y los preflight `OPTIONS`.
-- Después de validar, inyecta hacia el upstream:
+- El validador comprueba la firma RS256 contra la JWKS (en caché 3600 s), `exp`, `iss`, `aud` y que exista `sub`.
+- **Antes de validar**, Kong borra los headers `X-User-*` que mande el cliente, en todas las rutas
+  (incluidas las públicas y los preflight `OPTIONS`).
+- Después de validar, le pasa al servicio:
 
 | Header | Valor |
 |--------|-------|
 | `X-User-Id` | claim `sub` |
-| `X-User-Email` | claim de email. Si el token no lo trae, el header no se envía |
-| `X-User-Email-Verified` | `"true"` solo si el claim es el booleano `true` (o `"true"`); en cualquier otro caso `"false"` |
+| `X-User-Email` | claim de email. Si el token no lo trae, no se envía |
+| `X-User-Email-Verified` | `"true"` solo si el claim es `true` (o `"true"`); si no, `"false"` |
 | `X-User-Role` | claim de rol, o `"user"` por defecto |
 
-- La Action de Auth0 deniega el login a usuarios con el email sin verificar, así que en condiciones normales no llegan tokens con `email_verified = false`.
-- Las rutas `/api/v1/audit` y `/api/v1/metrics` exigen `role = staff`; si no, responden `403`.
-- Las rutas WebSocket aceptan el token también por query string (`?token=`), porque el handshake del navegador no permite headers custom. Las rutas REST lo aceptan solo por header.
-- Los errores (`401`, `403`, `500`) se devuelven en RFC 7807 (`application/problem+json`).
+- Las rutas WebSocket aceptan el token también por query string (`?token=`), porque el handshake del
+  navegador no permite headers propios. Las REST lo aceptan solo por header.
+- Los errores (`401`, `403`, `500`) salen en RFC 7807 (`application/problem+json`).
+- Login, registro, verificación de email y MFA son de Auth0, no pasan por el Gateway. La Action de Auth0
+  rechaza el login con el email sin verificar.
 
-Login, registro, verificación de email y MFA no pasan por el Gateway: son de Auth0. El recupero de
-contraseña se **dispara** por el Gateway (`POST /api/v1/auth/password-reset`, pública y con límite por
-IP) para aplicar límites propios, pero el email y la página donde se elige la nueva contraseña son de
-Auth0 (ver `auth0/password-reset.md`).
+## Rutas
 
-## Referencia de rutas
-
-Todas se acceden vía `http://localhost:8000`. Upstreams según `kong.yml`.
-
-| Path | Upstream | `strip_path` | Auth |
+| Path | Servicio | `strip_path` | Auth |
 |------|----------|--------------|------|
-| `/api/v1/users` (hoy: `GET` y `POST` `/api/v1/users/me`) | `auth-service:8000` | no | JWT |
-| `/api/v1/auth/password-reset` (`POST`) | `auth-service:8000` | no | **Pública** (strip de `X-User-*`) + rate limit propio: 5/min y 30/h por IP |
-| `/api/v1/chat` (REST) | `chat-engine-service:3000` | **sí** | JWT |
-| `/api/v1/chat` con `Upgrade: websocket` | `chat-engine-service:3000` | **sí** | JWT (header o `?token=`) |
-| `/api/v1/voice` | `voice-service:3001` | no | JWT |
-| `/ws/voice` | `voice-service:3001` | no | JWT (header o `?token=`) |
-| `/api/v1/servers`, `/api/v1/channels`, `/api/v1/roles`, `/api/v1/moderation`, `/api/v1/invites` | `server-roles-service:8080` | no | JWT |
-| `/api/v1/payments`, `/api/v1/points`, `/api/v1/boosts` | `payments-service:8002` | no | JWT + rate limit de 20/min además del global |
-| `/api/v1/notifications` | `notification-service:8003` | no | JWT |
-| `/api/v1/audit`, `/api/v1/metrics` | `notification-service:8003` | no | JWT + `role = staff` |
-| `/api/v1/status` | `notification-service:8003` | no | Pública (con strip de `X-User-*`) |
-| `/livez`, `/readyz` | Gateway (respuesta propia) | — | Pública |
+| `/api/v1/users`, `/api/v1/profile` | Auth-User | no | JWT |
+| `/api/v1/auth/password-reset` | Auth-User | no | **Pública** + 5/min y 30/h por IP |
+| `/api/v1/servers`, `/channels`, `/roles`, `/moderation`, `/invites` | Server-Roles | no | JWT |
+| `/api/v1/chat` (REST y WebSocket) | Chat-Engine | **sí** | JWT (WebSocket: header o `?token=`) |
+| `/api/v1/voice` | Voice-Signaling | no | JWT |
+| `/ws/voice` | Voice-Signaling | no | JWT (header o `?token=`) |
+| `/livekit` | LiveKit | **sí** | Sin JWT: LiveKit valida su propio token, que firma Voice-Signaling |
+| `/api/v1/payments`, `/points`, `/boosts` | Payments | no | JWT + 20/min |
+| `/api/v1/notifications` | Notification | no | JWT |
+| `/api/v1/audit`, `/api/v1/metrics` | Notification | no | JWT + `role = staff` (si no, `403`) |
+| `/api/v1/status` | Notification | no | Pública |
+| `/livez`, `/readyz` | el Gateway | — | Pública |
 
-`/livez` y `/readyz` responden `200` desde el propio Kong, sin consultar dependencias. `/readyz`
-todavía no verifica Redis.
+`/livez` y `/readyz` los responde Kong sin consultar dependencias: `/readyz` todavía no verifica Redis.
 
-### Plugins globales
+Plugins globales:
 
 | Plugin | Configuración |
 |--------|---------------|
-| `cors` | Orígenes `https://app.discordia.com`, `http://localhost:5173` y el host EC2 de desarrollo; expone `X-Correlation-ID` y `Retry-After` |
-| `rate-limiting` | 300 requests/min por IP, contador en Redis. Las rutas con su propio `rate-limiting` (pagos, recupero de contraseña) usan el suyo en lugar de este |
+| `cors` | Orígenes `https://app.discordia.lol` y `http://localhost:5173`; expone `X-Correlation-ID` y `Retry-After` |
+| `rate-limiting` | 300 pedidos por minuto por IP, contados en Redis. Las rutas con su propio límite usan el suyo |
 | `correlation-id` | `X-Correlation-ID` (UUID), devuelto también al cliente |
 | `request-size-limiting` | 50 MB |
 
-## Testing
+## Tests
 
-### Tests unitarios del validador
-
-Ejecutan `auth0_validator.lua` en un runtime Lua embebido (`lupa`), con `kong` y `resty.openidc`
-mockeados. Cubren el strip de headers falsificados, la propagación de claims, el fail-closed de
-`email_verified`, el rechazo de tokens inválidos o ausentes, el preflight `OPTIONS` y la autorización
-de `staff`.
+Los tests corren `auth0_validator.lua` en un runtime de Lua embebido (`lupa`), con `kong` y
+`resty.openidc` simulados. Cubren el borrado de headers falsificados, la propagación de claims, el rechazo
+de `email_verified` falso, tokens inválidos o ausentes, el preflight `OPTIONS` y la autorización de `staff`.
 
 ```bash
+python3 -m venv .venv && . .venv/bin/activate
 pip install lupa pytest
 pytest tests/
 ```
 
-### Pruebas contra la instancia viva
-
-```bash
-# Kong arrancó y cargó la configuración
-curl http://localhost:8001/
-curl http://localhost:8001/routes
-
-# Rutas públicas
-curl http://localhost:8000/livez
-curl http://localhost:8000/api/v1/status
-
-# Sin token o con token inválido → 401
-curl -i http://localhost:8000/api/v1/users/me
-curl -i -H "Authorization: Bearer invalid.token.here" http://localhost:8000/api/v1/users/me
-```
-
-Con un token real, `scripts/test-auth-token.sh` pide el token a Auth0 (grant `password-realm`, solo
-para pruebas locales) y llama a una ruta del Gateway. La app `discordia` es un *confidential client*,
-así que requiere `client_secret`.
+Con un token real, `scripts/test-auth-token.sh` pide el token a Auth0 (grant `password-realm`, solo para
+pruebas locales) y llama a una ruta del Gateway. La app `discordia` de Auth0 es un *confidential client*, así
+que necesita el `client_secret` (pedirlo al equipo; no se commitea):
 
 ```bash
 ./scripts/test-auth-token.sh <client_id> <client_secret> <password> tester@discordia.com /api/v1/users/me
-
-# Con un usuario sin role=staff → 403
-./scripts/test-auth-token.sh <client_id> <client_secret> <password> tester@discordia.com /api/v1/audit
+./scripts/test-auth-token.sh <client_id> <client_secret> <password> tester@discordia.com /api/v1/audit   # 403 sin staff
 ```
 
-Sin argumento de ruta, el script usa `/api/v1/users`, que en `auth-user-service` responde `404`:
-conviene pasar la ruta explícitamente.
+## Archivos
 
-## Contrato de API (OpenAPI)
+| Archivo | Para qué |
+|---------|----------|
+| `kong.yml` | Servicios, rutas y plugins (declarativo). Plantilla: los destinos son variables |
+| `render-config.sh` | Entrypoint de la imagen: completa los destinos de `kong.yml` y arranca Kong |
+| `auth0_validator.lua` | Verificación del JWT, headers de identidad y autorización por rol |
+| `gateway_health.lua` | `/livez` y `/readyz` del Gateway |
+| `auth0/post-login-action.js` | Action del login de Auth0 (agrega los claims). Se carga en el dashboard de Auth0, no en Kong |
+| `nginx/main-env.conf` | Directivas `env` para que las variables lleguen a Lua |
+| `nginx/shared-dicts.conf` | Memoria compartida (`discovery`, `jwks`) donde `lua-resty-openidc` guarda la JWKS |
+| `Dockerfile` | `kong:3.4` + `lua-resty-openidc` 1.7.6-3 y certificados CA |
+| `scripts/test-auth-token.sh` | Pide un token real a Auth0 y lo prueba contra el Gateway |
+| `tests/test_auth0_validator.py` | Tests del validador |
 
-Pendiente: la especificación OpenAPI 3.0 del Gateway todavía no está publicada. Mientras tanto, la
-fuente de verdad de rutas es `kong.yml`, y cada servicio expone su propio Swagger (por ejemplo,
-`auth-user-service` en `http://localhost:8004/docs`).
+## CI/CD
 
-## Dependencias
+`.github/workflows/ci.yml`:
 
-| Dependencia | Versión | Rol |
-|-------------|---------|-----|
-| Kong Gateway | 3.4 | API Gateway (DB-less) |
-| `lua-resty-openidc` | 1.7.6-3 | Verificación de JWT contra la JWKS remota, con cache |
-| Redis | 7-alpine | Contadores de `rate-limiting` |
-| Auth0 | — | Identity provider (RS256, JWKS con rotación) |
+1. `test`: los tests del validador y un chequeo de que todas las variables de `kong.yml` tengan default en
+   `render-config.sh`.
+2. `docker`: construye la imagen; en push a `main` o `develop` la publica como
+   `ghcr.io/discordia-g12/gateway:<sha>` (y `:<rama>`).
+3. `deploy`: en push a `main`, la despliega en el nodo **edge** con el workflow del orquestador (SSM; si no
+   queda sana, vuelve sola a la versión anterior).
+
+## Contrato de API
+
+El Gateway no tiene OpenAPI propio: la fuente de verdad de las rutas es `kong.yml`, y cada servicio publica
+su Swagger (ver el README de cada uno).
