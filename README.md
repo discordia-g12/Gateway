@@ -119,7 +119,8 @@ contenedor.
   navegador no permite headers propios. Las REST lo aceptan solo por header.
 - Los errores (`401`, `403`, `500`) salen en RFC 7807 (`application/problem+json`).
 - Login, registro, verificación de email y MFA son de Auth0, no pasan por el Gateway. La Action de Auth0
-  rechaza el login con el email sin verificar.
+  rechaza el login con el email sin verificar, y el login del backoffice a quien no es staff (secret
+  `BACKOFFICE_CLIENT_ID`, ver [ADR-002](docs/ADR-002-Rol-Staff-Backoffice.md)).
 
 ## Rutas
 
@@ -144,7 +145,7 @@ Plugins globales:
 
 | Plugin | Configuración |
 |--------|---------------|
-| `cors` | Orígenes `https://app.discordia.lol` y `http://localhost:5173`; expone `X-Correlation-ID` y `Retry-After` |
+| `cors` | Orígenes de la web (`https://app.discordia.lol`, `http://localhost:5173`) y del backoffice (`https://backoffice.discordia.lol`, `http://localhost:5174`); expone `X-Correlation-ID` y `Retry-After` |
 | `rate-limiting` | 300 pedidos por minuto por IP, contados en Redis. Las rutas con su propio límite usan el suyo |
 | `correlation-id` | `X-Correlation-ID` (UUID), devuelto también al cliente |
 | `request-size-limiting` | 50 MB |
