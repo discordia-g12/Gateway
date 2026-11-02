@@ -212,7 +212,8 @@ services:
 plugins:
   - name: cors
     config:
-      origins: ["https://app.discordia.lol", "http://localhost:5173"]
+      # La web y el backoffice (apps/web y apps/backoffice de Discordia-WebApp), en producción y en desarrollo
+      origins: ["https://app.discordia.lol", "https://backoffice.discordia.lol", "http://localhost:5173", "http://localhost:5174"]
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
       headers: ["Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"]
       exposed_headers: ["X-Correlation-ID", "Retry-After"]
