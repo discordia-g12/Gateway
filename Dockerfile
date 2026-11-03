@@ -21,7 +21,12 @@ ENV KONG_DATABASE=off \
     KONG_NGINX_MAIN_INCLUDE=/etc/kong/main-env.conf \
     KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES=gateway_health,auth0_validator,resty.openidc \
     KONG_LUA_SSL_TRUSTED_CERTIFICATE=/etc/ssl/certs/ca-certificates.crt \
-    KONG_LUA_SSL_VERIFY_DEPTH=5
+    KONG_LUA_SSL_VERIFY_DEPTH=5 \
+    KONG_STATUS_LISTEN=0.0.0.0:8100
+
+# Status API: /status y /metrics (plugin prometheus). No es el proxy: no se publica a internet; en
+# producción solo lo alcanza el nodo infra (Prometheus) por Security Group. Ver ADR-003.
+EXPOSE 8100
 
 USER kong
 ENTRYPOINT ["/usr/local/bin/render-config.sh"]

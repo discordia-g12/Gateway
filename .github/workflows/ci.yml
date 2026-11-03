@@ -16,9 +16,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Tests del validador de Auth0: corren el .lua con un runtime de Lua embebido (lupa)
+      # Tests del validador de Auth0 (corren el .lua con un runtime de Lua embebido, lupa) y chequeos
+      # estáticos de kong.yml (PyYAML)
       - name: Install test dependencies
-        run: pip install lupa pytest
+        run: pip install lupa pytest pyyaml
 
       - name: Run tests
         run: pytest tests/
@@ -72,6 +73,19 @@ jobs:
           tags: |
             type=sha,format=long,prefix=
             type=ref,event=branch
+
+      # Kong DB-less no arranca con un campo desconocido o una ruta inválida: se valida la config ya
+      # renderizada (el entrypoint completa las variables y después corre el comando) antes de publicar
+      - name: Build for validation
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: gateway:ci
+          cache-from: type=gha
+
+      - name: Validate declarative config
+        run: docker run --rm gateway:ci kong config parse /tmp/kong.yml
 
       - name: Build (and push on main/develop)
         uses: docker/build-push-action@v6

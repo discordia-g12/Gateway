@@ -165,6 +165,18 @@ services:
             config:
               access:
                 - 'require("auth0_validator").validate("staff", false)'
+      # Estado detallado de la plataforma para el backoffice (ADR-002 §4: ruta propia con rol staff; el
+      # servicio vuelve a chequear X-User-Role). OPTIONS para el preflight de CORS desde la web.
+      - name: admin-status
+        paths:
+          - "/api/v1/admin/status"
+        methods: ["GET", "OPTIONS"]
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate("staff", false)'
       - name: platform-status
         paths:
           - "/api/v1/status"
@@ -188,6 +200,159 @@ services:
         paths: ["/livekit"]
         strip_path: true
         protocols: ["http", "https"]
+
+  # Readiness interna: Notification-Audit-Metrics arma el estado de la plataforma sondeando el /readyz
+  # de cada servicio a través de Kong, que es el único que llega a todos (Auth no se publica fuera de la
+  # red edge y Payments solo acepta tráfico desde edge). Ver docs/ADR-003-Rutas-Internas-y-Metricas.md.
+  #
+  # Por qué es seguro exponerlas en el proxy: ip-restriction solo deja pasar IPs privadas. En producción
+  # el tráfico público entra únicamente por Cloudflare y Kong toma la IP real de CF-Connecting-IP
+  # (KONG_TRUSTED_IPS = rangos de Cloudflare), que siempre es pública: desde internet la respuesta es 403.
+  # Cloudflare pisa ese header, así que el cliente no puede mandar uno con una IP privada. Una conexión
+  # directa desde la VPC no viene de una IP de confianza, Kong ignora el header y ve la IP privada del nodo.
+  #
+  # Cada ruta usa un path exacto (regex con $) y strip_path: el upstream recibe exactamente /readyz
+  # (el path del servicio Kong). path_handling v0: con el path completo despojado, v0 y v1 dan lo mismo.
+  # Timeouts cortos y sin reintentos: un servicio colgado tiene que aparecer como caído, no frenar el
+  # sondeo. El rate-limiting global (300/min por IP) alcanza de sobra para el sondeo (~28 pedidos/min
+  # desde la IP del nodo realtime); si se suman sondeos, darle a estas rutas un límite propio.
+  - name: internal-readyz-auth
+    url: ${AUTH_SERVICE_URL}/readyz
+    connect_timeout: 2000
+    write_timeout: 2000
+    read_timeout: 2000
+    retries: 0
+    routes:
+      - name: internal-readyz-auth
+        paths: ["~/internal/readyz/auth$"]
+        methods: ["GET"]
+        strip_path: true
+        path_handling: v0
+        plugins:
+          - name: ip-restriction
+            config:
+              allow: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1"]
+              status: 403
+              message: "Ruta interna: solo accesible desde la red privada"
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").strip_identity_headers()'
+
+  - name: internal-readyz-server-roles
+    url: ${SERVER_ROLES_URL}/readyz
+    connect_timeout: 2000
+    write_timeout: 2000
+    read_timeout: 2000
+    retries: 0
+    routes:
+      - name: internal-readyz-server-roles
+        paths: ["~/internal/readyz/server-roles$"]
+        methods: ["GET"]
+        strip_path: true
+        path_handling: v0
+        plugins:
+          - name: ip-restriction
+            config:
+              allow: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1"]
+              status: 403
+              message: "Ruta interna: solo accesible desde la red privada"
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").strip_identity_headers()'
+
+  - name: internal-readyz-chat
+    url: ${CHAT_ENGINE_URL}/readyz
+    connect_timeout: 2000
+    write_timeout: 2000
+    read_timeout: 2000
+    retries: 0
+    routes:
+      - name: internal-readyz-chat
+        paths: ["~/internal/readyz/chat$"]
+        methods: ["GET"]
+        strip_path: true
+        path_handling: v0
+        plugins:
+          - name: ip-restriction
+            config:
+              allow: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1"]
+              status: 403
+              message: "Ruta interna: solo accesible desde la red privada"
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").strip_identity_headers()'
+
+  - name: internal-readyz-voice
+    url: ${VOICE_SIGNALING_URL}/readyz
+    connect_timeout: 2000
+    write_timeout: 2000
+    read_timeout: 2000
+    retries: 0
+    routes:
+      - name: internal-readyz-voice
+        paths: ["~/internal/readyz/voice$"]
+        methods: ["GET"]
+        strip_path: true
+        path_handling: v0
+        plugins:
+          - name: ip-restriction
+            config:
+              allow: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1"]
+              status: 403
+              message: "Ruta interna: solo accesible desde la red privada"
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").strip_identity_headers()'
+
+  - name: internal-readyz-notification
+    url: ${NOTIFICATION_URL}/readyz
+    connect_timeout: 2000
+    write_timeout: 2000
+    read_timeout: 2000
+    retries: 0
+    routes:
+      - name: internal-readyz-notification
+        paths: ["~/internal/readyz/notification$"]
+        methods: ["GET"]
+        strip_path: true
+        path_handling: v0
+        plugins:
+          - name: ip-restriction
+            config:
+              allow: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1"]
+              status: 403
+              message: "Ruta interna: solo accesible desde la red privada"
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").strip_identity_headers()'
+
+  - name: internal-readyz-payments
+    url: ${PAYMENTS_URL}/readyz
+    connect_timeout: 2000
+    write_timeout: 2000
+    read_timeout: 2000
+    retries: 0
+    routes:
+      - name: internal-readyz-payments
+        paths: ["~/internal/readyz/payments$"]
+        methods: ["GET"]
+        strip_path: true
+        path_handling: v0
+        plugins:
+          - name: ip-restriction
+            config:
+              allow: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.1"]
+              status: 403
+              message: "Ruta interna: solo accesible desde la red privada"
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").strip_identity_headers()'
 
   - name: api-gateway-self
     url: http://localhost:65535
@@ -230,3 +395,13 @@ plugins:
   - name: request-size-limiting
     config:
       allowed_payload_size: 50
+  # Métricas RED (pedidos, errores por código, latencia) por servicio y ruta. Se leen solo en el Status API
+  # (KONG_STATUS_LISTEN, :8100/metrics), nunca por el proxy. Sin consumer (no hay consumers de Kong y
+  # explotaría la cardinalidad), sin bandwidth ni salud de upstreams (no hay upstreams declarados).
+  - name: prometheus
+    config:
+      per_consumer: false
+      status_code_metrics: true
+      latency_metrics: true
+      bandwidth_metrics: false
+      upstream_health_metrics: false

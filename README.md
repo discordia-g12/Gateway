@@ -5,8 +5,9 @@ clientes. Valida los access tokens de Auth0 (RS256 contra la JWKS, con caché y 
 inyecta la identidad verificada en headers `X-User-*`, aplica autorización por rol, rate limiting y CORS,
 y hace proxy a los microservicios.
 
-Decisiones de diseño: [`docs/ADR-001-API-Gateway.md`](docs/ADR-001-API-Gateway.md) y
-[`docs/ADR-002-Rol-Staff-Backoffice.md`](docs/ADR-002-Rol-Staff-Backoffice.md).
+Decisiones de diseño: [`docs/ADR-001-API-Gateway.md`](docs/ADR-001-API-Gateway.md),
+[`docs/ADR-002-Rol-Staff-Backoffice.md`](docs/ADR-002-Rol-Staff-Backoffice.md) y
+[`docs/ADR-003-Rutas-Internas-y-Metricas.md`](docs/ADR-003-Rutas-Internas-y-Metricas.md).
 
 ## Requisitos
 
@@ -28,7 +29,7 @@ docker network create discordia-gateway
 docker run -d --name gateway-redis --network discordia-gateway --network-alias redis redis:7-alpine
 docker run -d --name gateway --network discordia-gateway --env-file .env \
   -e KONG_PROXY_LISTEN=0.0.0.0:8000 -e KONG_ADMIN_LISTEN=0.0.0.0:8001 \
-  -p 8000:8000 -p 127.0.0.1:8001:8001 discordia-gateway
+  -p 8000:8000 -p 127.0.0.1:8001:8001 -p 127.0.0.1:8100:8100 discordia-gateway
 ```
 
 Probarlo:
@@ -37,6 +38,7 @@ Probarlo:
 curl -i localhost:8000/livez                  # 200 {"status":"OK","service":"API Gateway"}
 curl -i localhost:8000/api/v1/users/me        # 401 Missing token
 curl -s localhost:8001/routes | head -c 300   # Admin API: rutas cargadas
+curl -s localhost:8100/metrics | head          # Status API: métricas de Prometheus
 ```
 
 Sin los servicios corriendo, una ruta con token válido responde `503`: Kong no encuentra el destino. Para
@@ -89,6 +91,7 @@ Variables propias de Kong que conviene conocer:
 |---|---|---|
 | `KONG_PROXY_LISTEN` | `0.0.0.0:8000, 0.0.0.0:8443 ssl` | Puertos del proxy. Sin certificado propio, Kong genera uno autofirmado para el 8443 |
 | `KONG_ADMIN_LISTEN` | `127.0.0.1:8001` | Admin API. En producción no sale del contenedor |
+| `KONG_STATUS_LISTEN` | `0.0.0.0:8100` | Status API: `/status` y `/metrics` (Prometheus). No es el proxy; en producción solo lo alcanza el nodo infra |
 | `KONG_SSL_CERT` / `KONG_SSL_CERT_KEY` | — | Solo producción: Origin Certificate de Cloudflare |
 | `KONG_TRUSTED_IPS` / `KONG_REAL_IP_HEADER` | — | Solo producción: los rangos de Cloudflare y `CF-Connecting-IP`, para que el rate limiting vea la IP real del usuario |
 
@@ -136,10 +139,16 @@ contenedor.
 | `/api/v1/payments`, `/points`, `/boosts` | Payments | no | JWT + 20/min |
 | `/api/v1/notifications` | Notification | no | JWT |
 | `/api/v1/audit`, `/api/v1/metrics` | Notification | no | JWT + `role = staff` (si no, `403`) |
+| `/api/v1/admin/status` | Notification | no | JWT + `role = staff` (si no, `403`) |
 | `/api/v1/status` | Notification | no | Pública |
 | `/livez`, `/readyz` | el Gateway | — | Pública |
+| `/internal/readyz/{auth,server-roles,chat,voice,notification,payments}` | el `/readyz` de cada servicio | **sí** (llega `/readyz`) | Solo IPs privadas (`ip-restriction`, si no `403`). Solo `GET`, path exacto |
 
 `/livez` y `/readyz` los responde Kong sin consultar dependencias: `/readyz` todavía no verifica Redis.
+
+Las rutas `/internal/readyz/*` son para que Notification-Audit-Metrics sondee el estado de cada servicio a
+través de Kong (timeouts de 2 s, sin reintentos). Detrás de Cloudflare la IP del cliente es siempre pública,
+así que desde internet dan `403`. Ver ADR-003.
 
 Plugins globales:
 
@@ -149,16 +158,19 @@ Plugins globales:
 | `rate-limiting` | 300 pedidos por minuto por IP, contados en Redis. Las rutas con su propio límite usan el suyo |
 | `correlation-id` | `X-Correlation-ID` (UUID), devuelto también al cliente |
 | `request-size-limiting` | 50 MB |
+| `prometheus` | Métricas RED por servicio y ruta (código y latencia; sin consumer). Solo en el Status API, `:8100/metrics` |
 
 ## Tests
 
 Los tests corren `auth0_validator.lua` en un runtime de Lua embebido (`lupa`), con `kong` y
 `resty.openidc` simulados. Cubren el borrado de headers falsificados, la propagación de claims, el rechazo
 de `email_verified` falso, tokens inválidos o ausentes, el preflight `OPTIONS` y la autorización de `staff`.
+`tests/test_kong_config.py` revisa `kong.yml`: rutas internas con `ip-restriction` y path exacto, rutas
+`/api/v1/admin/*` con `staff` y `prometheus` solo como plugin global.
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
-pip install lupa pytest
+pip install lupa pytest pyyaml
 pytest tests/
 ```
 
@@ -185,14 +197,15 @@ que necesita el `client_secret` (pedirlo al equipo; no se commitea):
 | `Dockerfile` | `kong:3.4` + `lua-resty-openidc` 1.7.6-3 y certificados CA |
 | `scripts/test-auth-token.sh` | Pide un token real a Auth0 y lo prueba contra el Gateway |
 | `tests/test_auth0_validator.py` | Tests del validador |
+| `tests/test_kong_config.py` | Chequeos estáticos de `kong.yml` (rutas internas, staff, métricas) |
 
 ## CI/CD
 
 `.github/workflows/ci.yml`:
 
-1. `test`: los tests del validador y un chequeo de que todas las variables de `kong.yml` tengan default en
-   `render-config.sh`.
-2. `docker`: construye la imagen; en push a `main` o `develop` la publica como
+1. `test`: los tests (validador y `kong.yml`) y un chequeo de que todas las variables de `kong.yml` tengan
+   default en `render-config.sh`.
+2. `docker`: construye la imagen y valida la configuración renderizada con `kong config parse`; en push a `main` o `develop` la publica como
    `ghcr.io/discordia-g12/gateway:<sha>` (y `:<rama>`).
 3. `deploy`: en push a `main`, la despliega en el nodo **edge** con el workflow del orquestador (SSM; si no
    queda sana, vuelve sola a la versión anterior).
