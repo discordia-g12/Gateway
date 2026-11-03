@@ -38,6 +38,19 @@ services:
               policy: redis
               redis_host: redis
 
+  - name: chat-engine-uploads
+    url: ${CHAT_ENGINE_URL}/uploads
+    connect_timeout: 10000
+    write_timeout: 10000
+    read_timeout: 10000
+    routes:
+      - name: chat-uploads
+        paths:
+          - "/api/v1/chat/uploads"
+        strip_path: true
+        protocols: ["http", "https"]
+        methods: ["GET", "HEAD", "OPTIONS"]
+
   - name: chat-engine-rest
     url: ${CHAT_ENGINE_URL}
     connect_timeout: 10000
