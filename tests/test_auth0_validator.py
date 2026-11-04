@@ -146,3 +146,42 @@ def test_strip_identity_headers_for_public_routes(lua):
     up = dict(rt.globals().state.upstream)
     assert not any(k.startswith("X-User-") for k in up)
     assert up["Authorization"] == "Bearer x"
+
+
+def test_resolves_canonical_user_id_for_federated_login():
+    rt = LuaRuntime(unpack_returned_tuples=True)
+    rt.execute(HARNESS)
+    rt.execute(r"""
+    package.preload["resty.http"] = function()
+      return {
+        new = function()
+          return {
+            set_timeout = function() end,
+            request_uri = function(self, url, opts)
+              if opts.headers["X-User-Email"] == "me@d.com" then
+                return { status = 200, body = '{"user_id":"auth0|primary","found":true}' }, nil
+              end
+              return { status = 200, body = '{"user_id":"' .. opts.headers["X-User-Id"] .. '","found":false}' }, nil
+            end
+          }
+        end
+      }
+    end
+    package.preload["cjson.safe"] = function()
+      return {
+        decode = function(s)
+          local uid = string.match(s, '"user_id"%s*:%s*"([^"]+)"')
+          local found = string.find(s, '"found"%s*:%s*true') ~= nil
+          return { user_id = uid, found = found }
+        end
+      }
+    end
+    """)
+    mod = rt.execute(VALIDATOR)
+    c = claims(sub="google-oauth2|12345", **{"https://discordia.app/email": "me@d.com", "https://discordia.app/email_verified": True})
+    up, status = run((rt, mod), headers={"Authorization": "Bearer x"}, claims=c)
+    assert status is None
+    assert up["X-User-Id"] == "auth0|primary"
+    assert up["X-User-Email"] == "me@d.com"
+    assert up["X-User-Email-Verified"] == "true"
+

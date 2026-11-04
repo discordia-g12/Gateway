@@ -1,4 +1,6 @@
 local openidc = require "resty.openidc"
+local ok_http, http = pcall(require, "resty.http")
+local ok_json, cjson = pcall(require, "cjson.safe")
 
 -- Verifica los access tokens emitidos por Auth0 para las rutas del Gateway.
 
@@ -9,6 +11,10 @@ local AUTH0_AUDIENCE = os.getenv("AUTH0_AUDIENCE")
 local AUTH0_ROLE_CLAIM = os.getenv("AUTH0_ROLE_CLAIM") or "https://discordia.app/role"
 local AUTH0_EMAIL_CLAIM = os.getenv("AUTH0_EMAIL_CLAIM") or "https://discordia.app/email"
 local AUTH0_EMAIL_VERIFIED_CLAIM = os.getenv("AUTH0_EMAIL_VERIFIED_CLAIM") or "https://discordia.app/email_verified"
+local AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL")
+if not AUTH_SERVICE_URL or AUTH_SERVICE_URL == "" then
+  AUTH_SERVICE_URL = "http://auth-service:8000"
+end
 
 local ISSUER = AUTH0_DOMAIN and ("https://" .. AUTH0_DOMAIN .. "/") or nil
 local JWKS_URI = AUTH0_DOMAIN and ("https://" .. AUTH0_DOMAIN .. "/.well-known/jwks.json") or nil
@@ -69,6 +75,58 @@ local function resolve_email_verified(claims)
     return "true"
   end
   return "false"
+end
+
+local function resolve_canonical_user_id(sub, email, verified_str)
+  if not email or email == "" or verified_str ~= "true" then
+    return sub
+  end
+
+  local dict = ngx and ngx.shared and ngx.shared.jwks or nil
+  local cache_key = "uid:" .. tostring(sub) .. ":" .. tostring(email)
+  if dict then
+    local cached = dict:get(cache_key)
+    if cached and cached ~= "" then
+      return cached
+    end
+  end
+
+  if not ok_http or not http or not ok_json or not cjson then
+    return sub
+  end
+
+  local httpc = http.new()
+  if not httpc then
+    return sub
+  end
+  httpc:set_timeout(1500)
+
+  local url = AUTH_SERVICE_URL .. "/api/v1/users/resolve-identity"
+  local res, err = httpc:request_uri(url, {
+    method = "GET",
+    headers = {
+      ["X-User-Id"] = tostring(sub),
+      ["X-User-Email"] = tostring(email),
+      ["X-User-Email-Verified"] = tostring(verified_str),
+    },
+  })
+
+  if not res or res.status ~= 200 or not res.body then
+    if err then
+      kong.log.warn("[auth0_validator] resolve-identity failed: ", tostring(err))
+    end
+    return sub
+  end
+
+  local data = cjson.decode(res.body)
+  if data and type(data.user_id) == "string" and data.user_id ~= "" then
+    if dict and data.found == true then
+      dict:set(cache_key, data.user_id, 300)
+    end
+    return data.user_id
+  end
+
+  return sub
 end
 
 -- require_role: opcional (ej. "staff") para rutas de backoffice/audit.
@@ -149,14 +207,16 @@ function M.validate(require_role, allow_query_arg)
   -- está, caemos al claim estándar "email" (por si algún día cambia el
   -- flujo de emisión y sí llega directo).
   local email = claims[AUTH0_EMAIL_CLAIM] or claims.email
+  local verified_str = resolve_email_verified(claims)
+  local canonical_id = resolve_canonical_user_id(tostring(claims.sub), email, verified_str)
 
-  kong.service.request.set_header("X-User-Id", tostring(claims.sub))
+  kong.service.request.set_header("X-User-Id", canonical_id)
   if email then
     kong.service.request.set_header("X-User-Email", tostring(email))
   else
     kong.log.warn("[auth0_validator] token sin claim de email (", AUTH0_EMAIL_CLAIM, "); X-User-Email no se propaga")
   end
-  kong.service.request.set_header("X-User-Email-Verified", resolve_email_verified(claims))
+  kong.service.request.set_header("X-User-Email-Verified", verified_str)
   kong.service.request.set_header("X-User-Role", tostring(role))
 end
 
