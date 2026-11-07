@@ -20,6 +20,18 @@ services:
             config:
               access:
                 - 'require("auth0_validator").validate(nil, false)'
+      # Backoffice: suspender, reactivar y listar cuentas suspendidas (ADR-002 §4: ruta propia con rol staff;
+      # Auth-User vuelve a chequear X-User-Role). OPTIONS para el preflight de CORS desde el backoffice.
+      - name: admin-users
+        paths:
+          - "/api/v1/admin/users"
+        methods: ["GET", "POST", "DELETE", "OPTIONS"]
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate("staff", false)'
       - name: password-reset
         paths:
           - "/api/v1/auth/password-reset"
