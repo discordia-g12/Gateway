@@ -77,6 +77,7 @@ probó.
 | `AUTH0_ROLE_CLAIM` | `https://discordia.app/role` | Claim con el rol (`user` o `staff`) |
 | `AUTH0_EMAIL_CLAIM` | `https://discordia.app/email` | Claim con el email. Si no viene, se usa `email` |
 | `AUTH0_EMAIL_VERIFIED_CLAIM` | `https://discordia.app/email_verified` | Claim de verificación. Si no viene, se usa `email_verified` |
+| `GATEWAY_REDIS_HOST` / `GATEWAY_REDIS_PORT` | `redis` / `6379` | Redis donde Auth-User guarda las cuentas suspendidas (el mismo del rate limiting). Kong rechaza con `403` (`account-suspended`) un token de una cuenta suspendida aunque siga vigente. Si Redis no responde, deja pasar y lo registra en el log |
 | `AUTH_SERVICE_URL` | `http://auth-service:8000` | Destino de Auth-User-Service |
 | `SERVER_ROLES_URL` | `http://server-roles-service:8080` | Destino de Server-Roles-Core-Service |
 | `CHAT_ENGINE_URL` | `http://chat-engine-service:3000` | Destino de Chat-Engine-Service |
@@ -130,6 +131,7 @@ contenedor.
 | Path | Servicio | `strip_path` | Auth |
 |------|----------|--------------|------|
 | `/api/v1/users`, `/api/v1/profile` | Auth-User | no | JWT |
+| `/api/v1/admin/users` | Auth-User | no | JWT + `role = staff` (si no, `403`). Suspender, reactivar y listar cuentas suspendidas |
 | `/api/v1/auth/password-reset` | Auth-User | no | **Pública** + 5/min y 30/h por IP |
 | `/api/v1/servers`, `/channels`, `/roles`, `/moderation`, `/invites` | Server-Roles | no | JWT |
 | `/api/v1/chat` (REST y WebSocket) | Chat-Engine | **sí** | JWT (WebSocket: header o `?token=`) |

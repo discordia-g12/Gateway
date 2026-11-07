@@ -109,3 +109,14 @@ def test_prometheus_only_global():
 
 def test_no_route_exposes_metrics_path():
     assert not route_matching("/metrics")
+
+
+def test_admin_users_routes_to_auth_and_requires_staff():
+    for path in ("/api/v1/admin/users/suspensions", "/api/v1/admin/users/suspended", "/api/v1/admin/users/x/suspension"):
+        matches = route_matching(path)
+        assert len(matches) == 1, f"{path}: se esperaba una ruta, hay {len(matches)}"
+        service, route = matches[0]
+        assert service["name"] == "auth-user-service"
+        assert route["strip_path"] is False
+        assert set(route["methods"]) == {"GET", "POST", "DELETE", "OPTIONS"}
+        assert access_code(route) == ['require("auth0_validator").validate("staff", false)']
