@@ -120,3 +120,24 @@ def test_admin_users_routes_to_auth_and_requires_staff():
         assert route["strip_path"] is False
         assert set(route["methods"]) == {"GET", "POST", "DELETE", "OPTIONS"}
         assert access_code(route) == ['require("auth0_validator").validate("staff", false)']
+
+
+def test_admin_servers_routes_to_server_roles_and_requires_staff():
+    for path in (
+        "/api/v1/admin/servers/suspended",
+        "/api/v1/admin/servers/0b6f6c1e-4b5a-4c3e-9d2a-1f2e3d4c5b6a/suspension",
+    ):
+        matches = route_matching(path)
+        assert len(matches) == 1, f"{path}: se esperaba una ruta, hay {len(matches)}"
+        service, route = matches[0]
+        assert service["name"] == "server-core-service"
+        assert route["strip_path"] is False
+        assert set(route["methods"]) == {"GET", "POST", "DELETE", "OPTIONS"}
+        assert access_code(route) == ['require("auth0_validator").validate("staff", false)']
+
+
+def test_member_routes_never_catch_admin_paths():
+    # /api/v1/servers (validate(nil)) no puede tomar /api/v1/admin/servers: el prefijo es distinto
+    for _, route in routes():
+        if route["name"] == "server-core-routes":
+            assert not any(p.startswith("/api/v1/admin") for p in route["paths"])

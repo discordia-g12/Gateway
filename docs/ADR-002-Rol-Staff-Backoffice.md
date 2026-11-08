@@ -157,6 +157,7 @@ Checklist para cada PR que agregue un endpoint de staff:
 | Asignar `staff` a las cuentas del equipo y del corrector en Auth0 | Pendiente |
 | Vida corta del access token y MFA para staff | Pendiente |
 | Suspender y reactivar usuarios: ruta `/api/v1/admin/users` (staff) y rechazo de cuentas suspendidas en `auth0_validator.lua` (lista en Redis, ADR-002 de Auth-User) | Implementado (con tests) |
+| Suspender servidores: ruta `/api/v1/admin/servers` (staff) hacia Server-Roles (ADR-002 de Server-Roles). El bloqueo del servidor lo hace Server-Roles, no Kong | Implementado (con tests) |
 | Resto de los endpoints de backoffice (listado de usuarios, servidores, expedientes, métricas, incidentes) | Pendiente (por etapas, con la §4) |
 | Chequeo de rol en cada servicio (regla 2) | Implementado en Auth-User (`require_staff`); pendiente en los demás, con sus endpoints |
 | Verificar que los Security Groups cierren los puertos de los servicios (regla 3) | Pendiente |

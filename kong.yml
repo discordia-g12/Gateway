@@ -148,6 +148,18 @@ services:
             config:
               access:
                 - 'require("auth0_validator").validate(nil, false)'
+      # Backoffice: suspender y levantar la suspensión de servidores, y listar los suspendidos (ADR-002 §4: ruta
+      # propia con rol staff; Server-Roles vuelve a chequear X-User-Role). OPTIONS para el preflight de CORS.
+      - name: admin-servers
+        paths:
+          - "/api/v1/admin/servers"
+        methods: ["GET", "POST", "DELETE", "OPTIONS"]
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate("staff", false)'
 
   - name: payments-service
     url: ${PAYMENTS_URL}
