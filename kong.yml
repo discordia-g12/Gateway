@@ -224,6 +224,20 @@ services:
             config:
               access:
                 - 'require("auth0_validator").strip_identity_headers()'
+      # Registro de auditoría de moderación de servidores (HU 61, ADR-04).
+      # Cualquier usuario autenticado puede solicitarlo; Notification-Audit verifica contra Server-Roles
+      # si es dueño o moderador en ese servidor. regex_priority asegura que Kong enrute acá y no a Server-Roles.
+      - name: server-audit-logs
+        paths:
+          - "~/api/v1/servers/[^/]+/audit-logs/?$"
+        methods: ["GET", "OPTIONS"]
+        strip_path: false
+        regex_priority: 100
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate(nil, false)'
 
   # Señalización de voz: el cliente abre wss://api.discordia.lol/livekit/rtc y Kong lo pasa a LiveKit
   # sin /livekit. Sin auth0_validator: LiveKit valida su propio token (lo firma voice-signaling).

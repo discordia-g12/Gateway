@@ -140,6 +140,7 @@ contenedor.
 | `/livekit` | LiveKit | **sí** | Sin JWT: LiveKit valida su propio token, que firma Voice-Signaling |
 | `/api/v1/payments`, `/points`, `/boosts` | Payments | no | JWT + 20/min |
 | `/api/v1/notifications` | Notification | no | JWT |
+| `/api/v1/servers/:id/audit-logs` | Notification | no | JWT. Registro de auditoría de moderación (HU 61). Prioridad regex sobre Server-Roles |
 | `/api/v1/audit`, `/api/v1/metrics` | Notification | no | JWT + `role = staff` (si no, `403`) |
 | `/api/v1/admin/status` | Notification | no | JWT + `role = staff` (si no, `403`) |
 | `/api/v1/admin/incidents` | Notification | no | JWT + `role = staff` (si no, `403`). Publicar, listar y resolver incidentes (`GET`, `POST`) |
