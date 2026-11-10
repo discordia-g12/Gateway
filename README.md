@@ -142,7 +142,8 @@ contenedor.
 | `/api/v1/notifications` | Notification | no | JWT |
 | `/api/v1/audit`, `/api/v1/metrics` | Notification | no | JWT + `role = staff` (si no, `403`) |
 | `/api/v1/admin/status` | Notification | no | JWT + `role = staff` (si no, `403`) |
-| `/api/v1/status` | Notification | no | Pública |
+| `/api/v1/admin/incidents` | Notification | no | JWT + `role = staff` (si no, `403`). Publicar, listar y resolver incidentes (`GET`, `POST`) |
+| `/api/v1/status` | Notification | no | Pública. Estado combinado e incidentes activos |
 | `/livez`, `/readyz` | el Gateway | — | Pública |
 | `/internal/readyz/{auth,server-roles,chat,voice,notification,payments}` | el `/readyz` de cada servicio | **sí** (llega `/readyz`) | Solo IPs privadas (`ip-restriction`, si no `403`). Solo `GET`, path exacto |
 

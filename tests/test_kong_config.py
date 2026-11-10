@@ -86,6 +86,28 @@ def test_admin_status_requires_staff():
     assert access_code(route) == ['require("auth0_validator").validate("staff", false)']
 
 
+@pytest.mark.parametrize(
+    "path", ["/api/v1/admin/incidents", "/api/v1/admin/incidents/0b7c6c1e-1f1a-4c2e-9d55-1f2a3b4c5d6e/resolve"]
+)
+def test_admin_incidents_requires_staff(path):
+    matches = route_matching(path)
+    assert len(matches) == 1
+    service, route = matches[0]
+    assert service["name"] == "notification-audit-service"
+    assert route["name"] == "admin-incidents"
+    assert route["strip_path"] is False
+    assert route["methods"] == ["GET", "POST", "OPTIONS"]
+    assert access_code(route) == ['require("auth0_validator").validate("staff", false)']
+
+
+def test_public_status_still_carries_incidents_without_identity():
+    # El aviso de incidentes sale en /api/v1/status: pública, sin X-User-* del cliente.
+    matches = route_matching("/api/v1/status")
+    assert len(matches) == 1
+    _, route = matches[0]
+    assert access_code(route) == ['require("auth0_validator").strip_identity_headers()']
+
+
 def test_admin_routes_never_accept_any_authenticated_user():
     # ADR-002 §4.1: un endpoint de staff nunca puede quedar en una ruta con validate(nil, ...)
     for _, route in routes():

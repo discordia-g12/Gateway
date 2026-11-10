@@ -202,6 +202,19 @@ services:
             config:
               access:
                 - 'require("auth0_validator").validate("staff", false)'
+      # Incidentes de la plataforma (historia 74): publicar (POST), historial (GET) y resolver
+      # (POST /{id}/resolve). Ruta propia con rol staff (ADR-002 §4); el servicio vuelve a chequear el rol y
+      # audita cada escritura. Los activos salen para todos en /api/v1/status, sin ruta nueva.
+      - name: admin-incidents
+        paths:
+          - "/api/v1/admin/incidents"
+        methods: ["GET", "POST", "OPTIONS"]
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate("staff", false)'
       - name: platform-status
         paths:
           - "/api/v1/status"

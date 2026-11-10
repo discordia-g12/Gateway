@@ -277,3 +277,59 @@ def test_resolves_canonical_user_id_for_federated_login():
     assert up["X-User-Email"] == "me@d.com"
     assert up["X-User-Email-Verified"] == "true"
 
+
+
+# ---------- Rutas de staff de kong.yml: 401 / 403 / 200 (ADR-002 §4, regla 8) ----------
+
+def staff_routes():
+    import yaml
+
+    found = []
+    config = yaml.safe_load((Path(__file__).parent.parent / "kong.yml").read_text())
+    for service in config["services"]:
+        for route in service.get("routes", []):
+            if any("/api/v1/admin" in p for p in route.get("paths", [])):
+                pre = next(p for p in route["plugins"] if p["name"] == "pre-function")
+                found.append(pytest.param(route["name"], pre["config"]["access"], id=route["name"]))
+    return found
+
+
+def run_route(lua, access, *, headers, claims=None, method="POST"):
+    """Corre el código de access de la ruta tal como está en kong.yml."""
+    rt, mod = lua
+    rt.globals().reset(method, rt.table_from(headers), rt.table_from(claims) if claims else None, None)
+    st = rt.globals().state
+    st["suspended"] = rt.table_from({})
+    st["redis_down"] = False
+    rt.globals().package.loaded["auth0_validator"] = mod
+    for code in access:
+        rt.execute(code)
+    exit_ = st.exit
+    return dict(st.upstream), (exit_.status if exit_ else None)
+
+
+def test_staff_routes_include_incidents():
+    assert "admin-incidents" in {p.values[0] for p in staff_routes()}
+
+
+@pytest.mark.parametrize("name,access", staff_routes())
+def test_staff_route_without_token_is_401(lua, name, access):
+    _, status = run_route(lua, access, headers={"X-User-Role": "staff"})
+    assert status == 401
+
+
+@pytest.mark.parametrize("name,access", staff_routes())
+def test_staff_route_with_user_role_is_403(lua, name, access):
+    up, status = run_route(lua, access, headers=SPOOF, claims=claims())
+    assert status == 403
+    assert not any(k.startswith("X-User-") for k in up)
+
+
+@pytest.mark.parametrize("name,access", staff_routes())
+def test_staff_route_with_staff_role_passes(lua, name, access):
+    up, status = run_route(
+        lua, access, headers={"Authorization": "Bearer x"}, claims=claims(**{"https://discordia.app/role": "staff"})
+    )
+    assert status is None  # sin exit: Kong sigue hacia el servicio (que responde 200/201)
+    assert up["X-User-Role"] == "staff"
+    assert up["X-User-Id"] == "auth0|real"
