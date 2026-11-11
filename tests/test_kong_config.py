@@ -142,3 +142,20 @@ def test_admin_users_routes_to_auth_and_requires_staff():
         assert route["strip_path"] is False
         assert set(route["methods"]) == {"GET", "POST", "DELETE", "OPTIONS"}
         assert access_code(route) == ['require("auth0_validator").validate("staff", false)']
+
+
+def test_server_audit_logs_routes_to_notification_service():
+    path = "/api/v1/servers/0b7c6c1e-1f1a-4c2e-9d55-1f2a3b4c5d6e/audit-logs"
+    # Filtrar por regex routes
+    found = [
+        (s, r) for s, r in routes()
+        if any(p.startswith("~") and re.search(p[1:].rstrip("$"), path) for p in r.get("paths", []))
+    ]
+    assert len(found) == 1
+    service, route = found[0]
+    assert service["name"] == "notification-audit-service"
+    assert route["name"] == "server-audit-logs"
+    assert route["strip_path"] is False
+    assert route["regex_priority"] == 100
+    assert set(route["methods"]) == {"GET", "OPTIONS"}
+    assert access_code(route) == ['require("auth0_validator").validate(nil, false)']
