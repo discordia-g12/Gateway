@@ -132,6 +132,7 @@ contenedor.
 |------|----------|--------------|------|
 | `/api/v1/users`, `/api/v1/profile` | Auth-User | no | JWT |
 | `/api/v1/admin/users` | Auth-User | no | JWT + `role = staff` (si no, `403`). Suspender, reactivar y listar cuentas suspendidas |
+| `/api/v1/admin/servers` | Server-Roles | no | JWT + `role = staff` (si no, `403`). Suspender y levantar la suspensión de servidores, y listar los suspendidos |
 | `/api/v1/auth/password-reset` | Auth-User | no | **Pública** + 5/min y 30/h por IP |
 | `/api/v1/servers`, `/channels`, `/roles`, `/moderation`, `/invites` | Server-Roles | no | JWT |
 | `/api/v1/chat` (REST y WebSocket) | Chat-Engine | **sí** | JWT (WebSocket: header o `?token=`) |
