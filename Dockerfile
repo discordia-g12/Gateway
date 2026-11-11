@@ -1,4 +1,4 @@
-FROM kong:3.4
+FROM kong:3.9
 USER root
 RUN sed -i 's|http://|https://|g' /etc/apt/sources.list 2>/dev/null || true \
     && apt-get update && apt-get install -y --no-install-recommends \
