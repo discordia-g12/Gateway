@@ -100,6 +100,18 @@ def test_admin_incidents_requires_staff(path):
     assert access_code(route) == ['require("auth0_validator").validate("staff", false)']
 
 
+def test_admin_metrics_requires_staff():
+    # Métricas globales del backoffice: GET con ?from&to y OPTIONS para el preflight de CORS.
+    matches = route_matching("/api/v1/admin/metrics")
+    assert len(matches) == 1
+    service, route = matches[0]
+    assert service["name"] == "notification-audit-service"
+    assert route["name"] == "admin-metrics"
+    assert route["strip_path"] is False
+    assert route["methods"] == ["GET", "OPTIONS"]
+    assert access_code(route) == ['require("auth0_validator").validate("staff", false)']
+
+
 def test_public_status_still_carries_incidents_without_identity():
     # El aviso de incidentes sale en /api/v1/status: pública, sin X-User-* del cliente.
     matches = route_matching("/api/v1/status")

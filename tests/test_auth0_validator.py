@@ -312,6 +312,10 @@ def test_staff_routes_include_incidents():
     assert "admin-incidents" in {p.values[0] for p in staff_routes()}
 
 
+def test_staff_routes_include_metrics():
+    assert "admin-metrics" in {p.values[0] for p in staff_routes()}
+
+
 @pytest.mark.parametrize("name,access", staff_routes())
 def test_staff_route_without_token_is_401(lua, name, access):
     _, status = run_route(lua, access, headers={"X-User-Role": "staff"})
