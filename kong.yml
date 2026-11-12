@@ -227,6 +227,20 @@ services:
             config:
               access:
                 - 'require("auth0_validator").validate("staff", false)'
+      # Métricas globales del backoffice (usuarios activos, servidores creados, mensajes enviados en un
+      # período, ?from&to). Notification junta los conteos de Chat y Server-Roles. Ruta propia con rol staff
+      # (ADR-002 §4); el servicio vuelve a chequear X-User-Role. OPTIONS para el preflight de CORS: por eso
+      # no se usa /api/v1/metrics (staff-only-routes no lo declara).
+      - name: admin-metrics
+        paths:
+          - "/api/v1/admin/metrics"
+        methods: ["GET", "OPTIONS"]
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate("staff", false)'
       - name: platform-status
         paths:
           - "/api/v1/status"
