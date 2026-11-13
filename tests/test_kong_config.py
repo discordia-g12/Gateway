@@ -159,6 +159,7 @@ def test_admin_users_routes_to_auth_and_requires_staff():
 def test_admin_servers_routes_to_server_roles_and_requires_staff():
     for path in (
         "/api/v1/admin/servers/suspended",
+        "/api/v1/admin/servers/0b6f6c1e-4b5a-4c3e-9d2a-1f2e3d4c5b6a",
         "/api/v1/admin/servers/0b6f6c1e-4b5a-4c3e-9d2a-1f2e3d4c5b6a/suspension",
     ):
         matches = route_matching(path)
