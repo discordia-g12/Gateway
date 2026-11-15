@@ -20,6 +20,18 @@ services:
             config:
               access:
                 - 'require("auth0_validator").validate(nil, false)'
+      # Backoffice: suspender, reactivar y listar cuentas suspendidas (ADR-002 §4: ruta propia con rol staff;
+      # Auth-User vuelve a chequear X-User-Role). OPTIONS para el preflight de CORS desde el backoffice.
+      - name: admin-users
+        paths:
+          - "/api/v1/admin/users"
+        methods: ["GET", "POST", "DELETE", "OPTIONS"]
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate("staff", false)'
       - name: password-reset
         paths:
           - "/api/v1/auth/password-reset"
@@ -136,6 +148,18 @@ services:
             config:
               access:
                 - 'require("auth0_validator").validate(nil, false)'
+      # Backoffice: suspender y levantar la suspensión de servidores, y listar los suspendidos (ADR-002 §4: ruta
+      # propia con rol staff; Server-Roles vuelve a chequear X-User-Role). OPTIONS para el preflight de CORS.
+      - name: admin-servers
+        paths:
+          - "/api/v1/admin/servers"
+        methods: ["GET", "POST", "DELETE", "OPTIONS"]
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate("staff", false)'
 
   - name: payments-service
     url: ${PAYMENTS_URL}
@@ -190,6 +214,33 @@ services:
             config:
               access:
                 - 'require("auth0_validator").validate("staff", false)'
+      # Incidentes de la plataforma (historia 74): publicar (POST), historial (GET) y resolver
+      # (POST /{id}/resolve). Ruta propia con rol staff (ADR-002 §4); el servicio vuelve a chequear el rol y
+      # audita cada escritura. Los activos salen para todos en /api/v1/status, sin ruta nueva.
+      - name: admin-incidents
+        paths:
+          - "/api/v1/admin/incidents"
+        methods: ["GET", "POST", "OPTIONS"]
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate("staff", false)'
+      # Métricas globales del backoffice (usuarios activos, servidores creados, mensajes enviados en un
+      # período, ?from&to). Notification junta los conteos de Chat y Server-Roles. Ruta propia con rol staff
+      # (ADR-002 §4); el servicio vuelve a chequear X-User-Role. OPTIONS para el preflight de CORS: por eso
+      # no se usa /api/v1/metrics (staff-only-routes no lo declara).
+      - name: admin-metrics
+        paths:
+          - "/api/v1/admin/metrics"
+        methods: ["GET", "OPTIONS"]
+        strip_path: false
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate("staff", false)'
       - name: platform-status
         paths:
           - "/api/v1/status"
@@ -199,6 +250,34 @@ services:
             config:
               access:
                 - 'require("auth0_validator").strip_identity_headers()'
+      # Registro de auditoría de moderación de servidores (HU 61, ADR-04).
+      # Cualquier usuario autenticado puede solicitarlo; Notification-Audit verifica contra Server-Roles
+      # si es dueño o moderador en ese servidor. regex_priority asegura que Kong enrute acá y no a Server-Roles.
+      - name: server-audit-logs
+        paths:
+          - "~/api/v1/servers/[^/]+/audit-logs/?$"
+        methods: ["GET", "OPTIONS"]
+        strip_path: false
+        regex_priority: 100
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate(nil, false)'
+
+      # Métricas de actividad de un servidor (solo administradores: Notification-Audit valida owner/ADMINISTRATOR/MANAGE_SERVER).
+      # El ancla final ($ ) mantiene /api/v1/servers/{id}/metrics/member-growth en Server-Roles.
+      - name: server-activity-metrics
+        paths:
+          - "~/api/v1/servers/[^/]+/metrics/?$"
+        methods: ["GET", "OPTIONS"]
+        strip_path: false
+        regex_priority: 100
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate(nil, false)'
 
   # Señalización de voz: el cliente abre wss://api.discordia.lol/livekit/rtc y Kong lo pasa a LiveKit
   # sin /livekit. Sin auth0_validator: LiveKit valida su propio token (lo firma voice-signaling).

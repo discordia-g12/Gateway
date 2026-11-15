@@ -1,4 +1,4 @@
-FROM kong:3.4
+FROM kong:3.9
 USER root
 RUN sed -i 's|http://|https://|g' /etc/apt/sources.list 2>/dev/null || true \
     && apt-get update && apt-get install -y --no-install-recommends \
@@ -19,7 +19,7 @@ ENV KONG_DATABASE=off \
     KONG_LUA_PACKAGE_PATH="/usr/local/share/lua/5.1/?.lua;;" \
     KONG_NGINX_HTTP_INCLUDE=/etc/kong/shared-dicts.conf \
     KONG_NGINX_MAIN_INCLUDE=/etc/kong/main-env.conf \
-    KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES=gateway_health,auth0_validator,resty.openidc,resty.http,cjson.safe \
+    KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES=gateway_health,auth0_validator,resty.openidc,resty.http,cjson.safe,resty.redis \
     KONG_LUA_SSL_TRUSTED_CERTIFICATE=/etc/ssl/certs/ca-certificates.crt \
     KONG_LUA_SSL_VERIFY_DEPTH=5 \
     KONG_STATUS_LISTEN=0.0.0.0:8100

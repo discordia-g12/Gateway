@@ -1,10 +1,21 @@
 local openidc = require "resty.openidc"
+local redis = require "resty.redis"
 local ok_http, http = pcall(require, "resty.http")
 local ok_json, cjson = pcall(require, "cjson.safe")
 
 -- Verifica los access tokens emitidos por Auth0 para las rutas del Gateway.
 
 local M = {}
+
+local unpack = table.unpack or unpack
+
+-- Cuentas suspendidas por el staff (ADR-002 de Auth-User-Service): Auth-User escribe estas claves en este
+-- mismo Redis. El formato tiene que coincidir con app/clients/suspension_denylist.py de Auth-User.
+local SUSPENDED_PREFIX = "suspended:"
+local REDIS_HOST = os.getenv("GATEWAY_REDIS_HOST") or "redis"
+local REDIS_PORT = tonumber(os.getenv("GATEWAY_REDIS_PORT") or "") or 6379
+local REDIS_TIMEOUT_MS = 200
+local ACCOUNT_SUSPENDED_TYPE = "https://discordia.app/problems/account-suspended"
 
 local AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN")
 local AUTH0_AUDIENCE = os.getenv("AUTH0_AUDIENCE")
@@ -32,7 +43,7 @@ function M.strip_identity_headers()
   end
 end
 
-local function reject(status, detail)
+local function reject(status, detail, problem_type)
   kong.log.warn("[auth0_validator] ", detail)
   local titles = {
     [400] = "Bad Request",
@@ -41,7 +52,7 @@ local function reject(status, detail)
     [500] = "Internal Server Error",
   }
   local problem = {
-    ["type"] = "about:blank",
+    ["type"] = problem_type or "about:blank",
     title = titles[status] or "Error",
     status = status,
     detail = detail,
@@ -75,6 +86,32 @@ local function resolve_email_verified(claims)
     return "true"
   end
   return "false"
+end
+
+local function trim_lower(value)
+  return (string.match(value, "^%s*(.-)%s*$") or value):lower()
+end
+
+-- true si la identidad (sub) o su email están en la lista de cuentas suspendidas. nil + error si Redis no
+-- respondió. Una sola consulta (EXISTS con las dos claves) por request autenticado.
+function M.is_suspended(sub, email)
+  local red = redis:new()
+  red:set_timeouts(REDIS_TIMEOUT_MS, REDIS_TIMEOUT_MS, REDIS_TIMEOUT_MS)
+  local ok, err = red:connect(REDIS_HOST, REDIS_PORT)
+  if not ok then
+    return nil, err
+  end
+  local keys = { SUSPENDED_PREFIX .. "sub:" .. sub }
+  if email then
+    keys[#keys + 1] = SUSPENDED_PREFIX .. "email:" .. trim_lower(email)
+  end
+  local count, exists_err = red:exists(unpack(keys))
+  if not count then
+    red:close()
+    return nil, exists_err
+  end
+  red:set_keepalive(10000, 50)
+  return tonumber(count) > 0
 end
 
 local function resolve_canonical_user_id(sub, email, verified_str)
@@ -194,12 +231,6 @@ function M.validate(require_role, allow_query_arg)
     return reject(401, "Token missing 'sub' claim")
   end
 
-  local role = claims[AUTH0_ROLE_CLAIM] or "user"
-
-  if require_role and role ~= require_role then
-    return reject(403, "Forbidden: " .. require_role .. " only")
-  end
-
   -- El access token de una API custom (audience != OIDC estándar) NO trae
   -- el claim "email" aunque el cliente haya pedido el scope "email": ese
   -- scope solo afecta al ID token. Por eso primero buscamos el claim
@@ -208,6 +239,25 @@ function M.validate(require_role, allow_query_arg)
   -- flujo de emisión y sí llega directo).
   local email = claims[AUTH0_EMAIL_CLAIM] or claims.email
   local verified_str = resolve_email_verified(claims)
+
+  -- Una cuenta suspendida no pasa aunque su token siga vigente (CA 2 de "Suspender usuario"). Va antes de
+  -- resolver la identidad canónica: a un suspendido se lo rechaza sin consultar a Auth-User. La lista tiene
+  -- todas sus identidades (la principal y los alias) y su email. Si Redis no responde se deja pasar y queda
+  -- en el log: Auth0 ya no le emite tokens nuevos (cuenta bloqueada) y Auth-User rechaza su perfil. Cortar
+  -- todo el tráfico por una caída de Redis sería peor.
+  local suspended, suspended_err = M.is_suspended(tostring(claims.sub), email and tostring(email) or nil)
+  if suspended == nil then
+    kong.log.err("[auth0_validator] no se pudo consultar la lista de suspendidos: ", tostring(suspended_err))
+  elseif suspended then
+    return reject(403, "Account suspended", ACCOUNT_SUSPENDED_TYPE)
+  end
+
+  local role = claims[AUTH0_ROLE_CLAIM] or "user"
+
+  if require_role and role ~= require_role then
+    return reject(403, "Forbidden: " .. require_role .. " only")
+  end
+
   local canonical_id = resolve_canonical_user_id(tostring(claims.sub), email, verified_str)
 
   kong.service.request.set_header("X-User-Id", canonical_id)

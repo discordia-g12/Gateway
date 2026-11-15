@@ -86,6 +86,40 @@ def test_admin_status_requires_staff():
     assert access_code(route) == ['require("auth0_validator").validate("staff", false)']
 
 
+@pytest.mark.parametrize(
+    "path", ["/api/v1/admin/incidents", "/api/v1/admin/incidents/0b7c6c1e-1f1a-4c2e-9d55-1f2a3b4c5d6e/resolve"]
+)
+def test_admin_incidents_requires_staff(path):
+    matches = route_matching(path)
+    assert len(matches) == 1
+    service, route = matches[0]
+    assert service["name"] == "notification-audit-service"
+    assert route["name"] == "admin-incidents"
+    assert route["strip_path"] is False
+    assert route["methods"] == ["GET", "POST", "OPTIONS"]
+    assert access_code(route) == ['require("auth0_validator").validate("staff", false)']
+
+
+def test_admin_metrics_requires_staff():
+    # Métricas globales del backoffice: GET con ?from&to y OPTIONS para el preflight de CORS.
+    matches = route_matching("/api/v1/admin/metrics")
+    assert len(matches) == 1
+    service, route = matches[0]
+    assert service["name"] == "notification-audit-service"
+    assert route["name"] == "admin-metrics"
+    assert route["strip_path"] is False
+    assert route["methods"] == ["GET", "OPTIONS"]
+    assert access_code(route) == ['require("auth0_validator").validate("staff", false)']
+
+
+def test_public_status_still_carries_incidents_without_identity():
+    # El aviso de incidentes sale en /api/v1/status: pública, sin X-User-* del cliente.
+    matches = route_matching("/api/v1/status")
+    assert len(matches) == 1
+    _, route = matches[0]
+    assert access_code(route) == ['require("auth0_validator").strip_identity_headers()']
+
+
 def test_admin_routes_never_accept_any_authenticated_user():
     # ADR-002 §4.1: un endpoint de staff nunca puede quedar en una ruta con validate(nil, ...)
     for _, route in routes():
@@ -109,3 +143,75 @@ def test_prometheus_only_global():
 
 def test_no_route_exposes_metrics_path():
     assert not route_matching("/metrics")
+
+
+def test_admin_users_routes_to_auth_and_requires_staff():
+    for path in ("/api/v1/admin/users/suspensions", "/api/v1/admin/users/suspended", "/api/v1/admin/users/x/suspension"):
+        matches = route_matching(path)
+        assert len(matches) == 1, f"{path}: se esperaba una ruta, hay {len(matches)}"
+        service, route = matches[0]
+        assert service["name"] == "auth-user-service"
+        assert route["strip_path"] is False
+        assert set(route["methods"]) == {"GET", "POST", "DELETE", "OPTIONS"}
+        assert access_code(route) == ['require("auth0_validator").validate("staff", false)']
+
+
+def test_admin_servers_routes_to_server_roles_and_requires_staff():
+    for path in (
+        "/api/v1/admin/servers/suspended",
+        "/api/v1/admin/servers/0b6f6c1e-4b5a-4c3e-9d2a-1f2e3d4c5b6a",
+        "/api/v1/admin/servers/0b6f6c1e-4b5a-4c3e-9d2a-1f2e3d4c5b6a/suspension",
+    ):
+        matches = route_matching(path)
+        assert len(matches) == 1, f"{path}: se esperaba una ruta, hay {len(matches)}"
+        service, route = matches[0]
+        assert service["name"] == "server-core-service"
+        assert route["strip_path"] is False
+        assert set(route["methods"]) == {"GET", "POST", "DELETE", "OPTIONS"}
+        assert access_code(route) == ['require("auth0_validator").validate("staff", false)']
+
+
+def test_member_routes_never_catch_admin_paths():
+    # /api/v1/servers (validate(nil)) no puede tomar /api/v1/admin/servers: el prefijo es distinto
+    for _, route in routes():
+        if route["name"] == "server-core-routes":
+            assert not any(p.startswith("/api/v1/admin") for p in route["paths"])
+def test_server_audit_logs_routes_to_notification_service():
+    path = "/api/v1/servers/0b7c6c1e-1f1a-4c2e-9d55-1f2a3b4c5d6e/audit-logs"
+    # Filtrar por regex routes
+    found = [
+        (s, r) for s, r in routes()
+        if any(p.startswith("~") and re.search(p[1:].rstrip("$"), path) for p in r.get("paths", []))
+    ]
+    assert len(found) == 1
+    service, route = found[0]
+    assert service["name"] == "notification-audit-service"
+    assert route["name"] == "server-audit-logs"
+    assert route["strip_path"] is False
+    assert route["regex_priority"] == 100
+    assert set(route["methods"]) == {"GET", "OPTIONS"}
+    assert access_code(route) == ['require("auth0_validator").validate(nil, false)']
+
+
+def test_server_activity_metrics_routes_to_notification_service_without_shadowing_member_growth():
+    metrics_path = "/api/v1/servers/0b7c6c1e-1f1a-4c2e-9d55-1f2a3b4c5d6e/metrics"
+    growth_path = f"{metrics_path}/member-growth"
+
+    found_metrics = [
+        (s, r) for s, r in routes()
+        if any(p.startswith("~") and re.search(p[1:], metrics_path) for p in r.get("paths", []))
+    ]
+    assert len(found_metrics) == 1
+    service, route = found_metrics[0]
+    assert service["name"] == "notification-audit-service"
+    assert route["name"] == "server-activity-metrics"
+    assert route["strip_path"] is False
+    assert route["regex_priority"] == 100
+    assert set(route["methods"]) == {"GET", "OPTIONS"}
+    assert access_code(route) == ['require("auth0_validator").validate(nil, false)']
+
+    shadowed_growth = [
+        r["name"] for _, r in routes()
+        if any(p.startswith("~") and re.search(p[1:], growth_path) for p in r.get("paths", []))
+    ]
+    assert "server-activity-metrics" not in shadowed_growth
