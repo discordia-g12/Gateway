@@ -191,3 +191,27 @@ def test_server_audit_logs_routes_to_notification_service():
     assert route["regex_priority"] == 100
     assert set(route["methods"]) == {"GET", "OPTIONS"}
     assert access_code(route) == ['require("auth0_validator").validate(nil, false)']
+
+
+def test_server_activity_metrics_routes_to_notification_service_without_shadowing_member_growth():
+    metrics_path = "/api/v1/servers/0b7c6c1e-1f1a-4c2e-9d55-1f2a3b4c5d6e/metrics"
+    growth_path = f"{metrics_path}/member-growth"
+
+    found_metrics = [
+        (s, r) for s, r in routes()
+        if any(p.startswith("~") and re.search(p[1:], metrics_path) for p in r.get("paths", []))
+    ]
+    assert len(found_metrics) == 1
+    service, route = found_metrics[0]
+    assert service["name"] == "notification-audit-service"
+    assert route["name"] == "server-activity-metrics"
+    assert route["strip_path"] is False
+    assert route["regex_priority"] == 100
+    assert set(route["methods"]) == {"GET", "OPTIONS"}
+    assert access_code(route) == ['require("auth0_validator").validate(nil, false)']
+
+    shadowed_growth = [
+        r["name"] for _, r in routes()
+        if any(p.startswith("~") and re.search(p[1:], growth_path) for p in r.get("paths", []))
+    ]
+    assert "server-activity-metrics" not in shadowed_growth

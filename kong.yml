@@ -265,6 +265,20 @@ services:
               access:
                 - 'require("auth0_validator").validate(nil, false)'
 
+      # Métricas de actividad de un servidor (solo administradores: Notification-Audit valida owner/ADMINISTRATOR/MANAGE_SERVER).
+      # El ancla final ($ ) mantiene /api/v1/servers/{id}/metrics/member-growth en Server-Roles.
+      - name: server-activity-metrics
+        paths:
+          - "~/api/v1/servers/[^/]+/metrics/?$"
+        methods: ["GET", "OPTIONS"]
+        strip_path: false
+        regex_priority: 100
+        plugins:
+          - name: pre-function
+            config:
+              access:
+                - 'require("auth0_validator").validate(nil, false)'
+
   # Señalización de voz: el cliente abre wss://api.discordia.lol/livekit/rtc y Kong lo pasa a LiveKit
   # sin /livekit. Sin auth0_validator: LiveKit valida su propio token (lo firma voice-signaling).
   # El audio NO pasa por acá: va directo a LiveKit por UDP 7882 (o TCP 7881).
