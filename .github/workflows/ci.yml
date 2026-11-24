@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main, develop]
 
+# Un push nuevo a un PR cancela el run anterior del mismo PR. Cada push a main/develop tiene su propio grupo
+# (el run_id): nunca se cancela ni se descarta uno que publica una imagen o despliega.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -89,7 +95,9 @@ jobs:
       - name: Validate declarative config
         run: docker run --rm gateway:ci kong config parse /tmp/kong.yml
 
+      # En los PRs alcanza con el build de validación de arriba: este solo hace falta para publicar
       - name: Build (and push on main/develop)
+        if: env.PUSH == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
